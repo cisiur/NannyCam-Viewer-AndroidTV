@@ -102,6 +102,39 @@ Device capabilities must be detected rather than assumed, particularly:
 - audio-focus behavior;
 - background/PiP lifecycle behavior.
 
+## Physically verified Fire TV baseline
+
+The following facts were collected from the primary physical target via ADB. They are a
+tested-device baseline, not application requirements and must never be hard-coded into
+product logic.
+
+| Property | Physically verified value |
+| --- | --- |
+| Manufacturer / model | Amazon / `AFTKRT` |
+| Device / product codename | `karat` |
+| SoC / platform | `mt8696` |
+| Fire OS / Android base | Fire OS `8.1.8.5` / Android 11 |
+| API level | 30 |
+| App ABIs | `armeabi-v7a`, `armeabi` |
+| TV features | `android.hardware.type.television`, `android.software.leanback`, `android.software.leanback_only` |
+| PiP feature | `android.software.picture_in_picture` |
+| Physical display / Android logical override | 3840x2160 / 1920x1080 |
+| Density | 320 dpi |
+| H.264 decoder | `OMX.MTK.VIDEO.DECODER.AVC` |
+| Decoder classification | vendor, not software-only, hardware-accelerated |
+| Known video capability | H.264 Main; 1920x1080 at approximately 12 fps is comfortably within the reported decoder performance |
+
+ATV-00 displays the corresponding runtime-derived manufacturer, model, API level, ABI,
+PiP-feature and AVC-decoder diagnostics using Android APIs (`Build`, `PackageManager`,
+and `MediaCodecList`). The values above are the expected physical-device comparison
+point only; runtime diagnostics are the source of truth on any installed device.
+
+### Audio-focus status
+
+No camera audio path, audio-focus request, or PiP entry exists in ATV-00. The target's
+audio-focus behavior with another application is intentionally deferred until real camera
+audio exists. It must not be considered physically completed from this baseline.
+
 ## Source of camera knowledge
 
 The reverse-engineering facts in this repository came from the completed Windows NannyCam Viewer investigation and physical tests against the same camera.

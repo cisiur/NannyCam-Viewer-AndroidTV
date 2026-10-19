@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">NannyCam Viewer</string>
+    <string name="camera_configuration">Camera configuration</string>
+    <string name="camera_endpoint_label">Camera host / RTSP URI</string>
+    <string name="camera_endpoint_hint">camera.local or rtsp://camera:554/streamtype=0</string>
+    <string name="save">Save</string>
+    <string name="connect">Connect</string>
+    <string name="connect_unavailable">Connect is available in ATV-01. No camera connection is attempted in this build.</string>
+    <string name="configuration_saved">Camera endpoint saved.</string>
+    <string name="status">Status</string>
+    <string name="not_connected">Not connected</string>
+    <string name="runtime_diagnostics">Runtime diagnostics</string>
+</resources>

@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true"
+    android:background="@color/screen_background">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingStart="64dp"
+        android:paddingTop="40dp"
+        android:paddingEnd="64dp"
+        android:paddingBottom="40dp">
+
+        <TextView
+            android:id="@+id/application_heading"
+            style="@style/NannyCamHeading"
+            android:text="@string/app_name" />
+
+        <TextView
+            style="@style/NannyCamSectionHeading"
+            android:layout_marginTop="32dp"
+            android:text="@string/camera_configuration" />
+
+        <TextView
+            style="@style/NannyCamLabel"
+            android:layout_marginTop="16dp"
+            android:text="@string/camera_endpoint_label" />
+
+        <EditText
+            android:id="@+id/endpoint_input"
+            style="@style/NannyCamInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:hint="@string/camera_endpoint_hint"
+            android:imeOptions="actionDone"
+            android:inputType="textUri"
+            android:maxLines="1" />
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/save_button"
+                style="@style/NannyCamButton"
+                android:text="@string/save" />
+
+            <Button
+                android:id="@+id/connect_button"
+                style="@style/NannyCamButton"
+                android:layout_marginStart="16dp"
+                android:contentDescription="@string/connect_unavailable"
+                android:enabled="false"
+                android:text="@string/connect" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/configuration_message"
+            style="@style/NannyCamMessage"
+            android:layout_marginTop="12dp" />
+
+        <TextView
+            style="@style/NannyCamSectionHeading"
+            android:layout_marginTop="28dp"
+            android:text="@string/status" />
+
+        <TextView
+            style="@style/NannyCamStatus"
+            android:text="@string/not_connected" />
+
+        <TextView
+            style="@style/NannyCamMessage"
+            android:layout_marginTop="8dp"
+            android:text="@string/connect_unavailable" />
+
+        <TextView
+            style="@style/NannyCamSectionHeading"
+            android:layout_marginTop="28dp"
+            android:text="@string/runtime_diagnostics" />
+
+        <TextView
+            android:id="@+id/diagnostics_text"
+            style="@style/NannyCamDiagnostics"
+            android:layout_marginTop="12dp" />
+    </LinearLayout>
+</ScrollView>

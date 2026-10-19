@@ -10,21 +10,25 @@
 
 Goal: establish a standalone native TV application and identify the real capabilities of the target Android TV / Fire TV device before making media-stack assumptions.
 
-- [ ] identify the primary physical target device
-- [ ] record Fire OS / Android version and API level
-- [ ] record CPU ABI
-- [ ] verify ADB debugging and sideload workflow
-- [ ] verify available H.264 hardware decoder capabilities
-- [ ] verify whether `FEATURE_PICTURE_IN_PICTURE` is exposed
-- [ ] record observed platform behavior when another app owns audio focus
-- [ ] create native Kotlin/Android project
-- [ ] configure TV launcher activity
-- [ ] support D-pad navigation from the start
-- [ ] avoid mandatory Google Play Services
-- [ ] add configurable camera host / RTSP URI
-- [ ] add basic CI for the Android project
+- [x] identify the primary physical target device
+- [x] record Fire OS / Android version and API level
+- [x] record CPU ABI
+- [ ] verify ADB debugging and APK sideload workflow with this application
+- [x] verify available H.264 hardware decoder capabilities
+- [x] verify whether `FEATURE_PICTURE_IN_PICTURE` is exposed
+- [ ] record observed platform behavior when another app owns audio focus (deferred until a real audio path exists)
+- [~] create native Kotlin/Android project
+- [~] configure TV launcher activity
+- [~] support D-pad navigation from the start
+- [x] avoid mandatory Google Play Services
+- [~] add configurable camera host / RTSP URI
+- [~] add basic CI for the Android project
 
 Exit: minimal APK builds, installs, launches on the physical TV device, and can be operated with its remote.
+
+ATV-00 is not complete until the APK is installed and launched on the physical Fire TV,
+launcher visibility and remote operation are verified, and saved configuration is checked
+after relaunch. The project has no audio path yet, so audio-focus behavior remains deferred.
 
 ## ATV-01 — Low-latency live video
 
