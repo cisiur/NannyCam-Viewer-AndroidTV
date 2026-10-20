@@ -23,6 +23,7 @@ Goal: establish a standalone native TV application and identify the real capabil
 - [x] avoid mandatory Google Play Services
 - [~] add configurable camera host / RTSP URI
 - [~] add basic CI for the Android project
+- [~] complete endpoint save/IME focus handoff for TV remote use
 
 Exit: minimal APK builds, installs, launches on the physical TV device, and can be operated with its remote.
 
@@ -45,19 +46,23 @@ Requirements:
 
 Plan:
 
-- [ ] spike Android Media3/ExoPlayer RTSP for **video only**
+- [~] spike Android Media3/ExoPlayer RTSP for **video only**
 - [ ] verify the physical camera rather than relying on emulator/sample streams
-- [ ] prefer platform MediaCodec hardware H.264 decode
-- [ ] measure startup latency
+- [~] prefer platform MediaCodec hardware H.264 decode and expose selected-decoder diagnostics
+- [~] record Connect-to-first-frame startup timing for physical measurement
 - [ ] measure latency after extended playback
 - [ ] confirm no progressive lag
-- [ ] implement explicit Disconnect/resource release
-- [ ] add reconnect/liveness behavior after basic stream validation
+- [~] implement explicit Disconnect/resource release
+- [~] add reconnect/liveness behavior after basic stream validation
 - [ ] if Media3 is unsuitable, replace only the minimum required RTSP/demux layer
 
 Do not make the malformed audio track a reason to discard a working hardware video path.
 
 Exit: physical TV device displays stable live video with no progressive delay.
+
+ATV-01 implementation is awaiting physical validation. No camera connection, decoder
+choice, reconnect recovery, or latency conclusion is complete until it is tested on the
+primary Fire TV and camera.
 
 ## ATV-02 — Correct camera audio
 

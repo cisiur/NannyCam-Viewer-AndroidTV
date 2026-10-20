@@ -6,9 +6,18 @@
     <string name="camera_endpoint_hint">camera.local or rtsp://camera:554/streamtype=0</string>
     <string name="save">Save</string>
     <string name="connect">Connect</string>
-    <string name="connect_unavailable">Connect is available in ATV-01. No camera connection is attempted in this build.</string>
+    <string name="disconnect">Disconnect</string>
     <string name="configuration_saved">Camera endpoint saved.</string>
     <string name="status">Status</string>
     <string name="not_connected">Not connected</string>
+    <string name="connecting">Connecting</string>
+    <string name="playing">Playing</string>
+    <string name="reconnecting">Reconnecting</string>
+    <string name="error">Error</string>
+    <string name="error_status">Error: %1$s</string>
+    <string name="save_endpoint_first">Save a valid camera endpoint first.</string>
+    <string name="selected_decoder_unknown">Selected video decoder: not selected</string>
+    <string name="selected_decoder">Selected video decoder: %1$s</string>
+    <string name="first_frame_rendered">First video frame rendered in approximately %1$d ms.</string>
     <string name="runtime_diagnostics">Runtime diagnostics</string>
 </resources>

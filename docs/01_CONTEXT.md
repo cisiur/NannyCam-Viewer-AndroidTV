@@ -135,6 +135,13 @@ No camera audio path, audio-focus request, or PiP entry exists in ATV-00. The ta
 audio-focus behavior with another application is intentionally deferred until real camera
 audio exists. It must not be considered physically completed from this baseline.
 
+## ATV-01 Media3 video candidate
+
+ATV-01 adds a Media3 video-only RTSP implementation; its transport, decoder observation,
+reconnect policy, liveness signal, and strict audio boundary are documented in
+`docs/05_ATV01_MEDIA3_VIDEO.md`. It is implementation complete only to the extent shown
+in the roadmap and awaits physical Fire TV validation.
+
 ## Source of camera knowledge
 
 The reverse-engineering facts in this repository came from the completed Windows NannyCam Viewer investigation and physical tests against the same camera.
