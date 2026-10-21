@@ -42,7 +42,6 @@ class VideoPlaybackController(
     private var cameraUri: String? = null
     private var connectIntent = false
     private var connectStartedAtMs = 0L
-    private var lastVideoProgressAtMs = 0L
     private var firstFrameReported = false
 
     private val reconnectRunnable = Runnable {
@@ -51,19 +50,6 @@ class VideoPlaybackController(
         if (!connectIntent || uri == null) return@Runnable
         Log.i(TAG, "Reconnect attempt")
         startPlayer(uri, reconnecting = true)
-    }
-
-    private val livenessRunnable = object : Runnable {
-        override fun run() {
-            if (!connectIntent || stateMachine.state == ConnectionState.NOT_CONNECTED) return
-            val elapsedSinceProgress = SystemClock.elapsedRealtime() - lastVideoProgressAtMs
-            if (elapsedSinceProgress >= LIVENESS_TIMEOUT_MS) {
-                Log.w(TAG, "Video liveness timeout after ${elapsedSinceProgress}ms")
-                handlePlaybackFailure("Video progress timed out")
-                return
-            }
-            handler.postDelayed(this, LIVENESS_CHECK_INTERVAL_MS)
-        }
     }
 
     val state: ConnectionState
@@ -86,7 +72,6 @@ class VideoPlaybackController(
         cameraUri = null
         reconnectPolicy.cancel()
         handler.removeCallbacks(reconnectRunnable)
-        handler.removeCallbacks(livenessRunnable)
         releasePlayer()
         stateMachine.disconnect()
         notifyState()
@@ -98,7 +83,6 @@ class VideoPlaybackController(
 
     private fun startPlayer(uri: String, reconnecting: Boolean) {
         handler.removeCallbacks(reconnectRunnable)
-        handler.removeCallbacks(livenessRunnable)
         releasePlayer()
 
         if (reconnecting) {
@@ -108,7 +92,6 @@ class VideoPlaybackController(
             Log.i(TAG, "Creating player")
         }
         connectStartedAtMs = SystemClock.elapsedRealtime()
-        lastVideoProgressAtMs = connectStartedAtMs
         firstFrameReported = false
 
         val trackSelector = DefaultTrackSelector(appContext).apply {
@@ -126,20 +109,18 @@ class VideoPlaybackController(
 
         val mediaSource = RtspMediaSource.Factory()
             .setForceUseRtpTcp(true)
-            .setTimeoutMs(LIVENESS_TIMEOUT_MS)
+            .setTimeoutMs(RTSP_TIMEOUT_MS)
             .createMediaSource(MediaItem.fromUri(uri))
         Log.i(TAG, "RTSP preparation started with RTP-over-RTSP/TCP")
         newPlayer.setMediaSource(mediaSource)
         newPlayer.prepare()
         newPlayer.playWhenReady = true
-        handler.postDelayed(livenessRunnable, LIVENESS_CHECK_INTERVAL_MS)
     }
 
     private val playerListener = object : Player.Listener {
         override fun onPlaybackStateChanged(playbackState: Int) {
             Log.i(TAG, "Playback state changed: $playbackState")
             if (playbackState == Player.STATE_READY && player?.playWhenReady == true) {
-                lastVideoProgressAtMs = SystemClock.elapsedRealtime()
                 stateMachine.playbackStarted()
                 reconnectPolicy.reset()
                 notifyState()
@@ -147,10 +128,9 @@ class VideoPlaybackController(
         }
 
         override fun onRenderedFirstFrame() {
-            lastVideoProgressAtMs = SystemClock.elapsedRealtime()
             if (!firstFrameReported) {
                 firstFrameReported = true
-                val startupLatencyMs = lastVideoProgressAtMs - connectStartedAtMs
+                val startupLatencyMs = SystemClock.elapsedRealtime() - connectStartedAtMs
                 Log.i(TAG, "First video frame rendered; startup latency ${startupLatencyMs}ms")
                 listener.onFirstFrameRendered(startupLatencyMs)
             }
@@ -173,18 +153,10 @@ class VideoPlaybackController(
             listener.onSelectedVideoDecoder(decoderName)
         }
 
-        override fun onVideoFrameProcessingOffset(
-            eventTime: AnalyticsListener.EventTime,
-            totalProcessingOffsetUs: Long,
-            frameCount: Int
-        ) {
-            if (frameCount > 0) lastVideoProgressAtMs = SystemClock.elapsedRealtime()
-        }
     }
 
     private fun handlePlaybackFailure(message: String) {
         if (!connectIntent) return
-        handler.removeCallbacks(livenessRunnable)
         listener.onPlaybackError(message)
         releasePlayer()
         stateMachine.playbackFailed()
@@ -211,7 +183,7 @@ class VideoPlaybackController(
 
     private companion object {
         const val TAG = "VideoPlayback"
-        const val LIVENESS_TIMEOUT_MS = 5_000L
-        const val LIVENESS_CHECK_INTERVAL_MS = 1_000L
+        // This remains an RTSP transport/source timeout, not an application-level frame watchdog.
+        const val RTSP_TIMEOUT_MS = 5_000L
     }
 }

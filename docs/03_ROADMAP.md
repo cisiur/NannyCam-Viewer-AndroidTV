@@ -46,23 +46,27 @@ Requirements:
 
 Plan:
 
-- [~] spike Android Media3/ExoPlayer RTSP for **video only**
-- [ ] verify the physical camera rather than relying on emulator/sample streams
-- [~] prefer platform MediaCodec hardware H.264 decode and expose selected-decoder diagnostics
-- [~] record Connect-to-first-frame startup timing for physical measurement
+- [x] spike Android Media3/ExoPlayer RTSP for **video only**
+- [x] verify the physical camera rather than relying on emulator/sample streams
+- [x] verify the selected hardware H.264 decoder and expose selected-decoder diagnostics
+- [x] record physical Connect-to-first-frame startup timing
 - [ ] measure latency after extended playback
 - [ ] confirm no progressive lag
 - [~] implement explicit Disconnect/resource release
-- [~] add reconnect/liveness behavior after basic stream validation
+- [~] add reconnect behavior after basic stream validation
+- [ ] establish a reliable frozen-video liveness signal (the false-positive custom watchdog was removed)
+- [ ] physically verify reconnect after actual camera or network loss
 - [ ] if Media3 is unsuitable, replace only the minimum required RTSP/demux layer
 
 Do not make the malformed audio track a reason to discard a working hardware video path.
 
 Exit: physical TV device displays stable live video with no progressive delay.
 
-ATV-01 implementation is awaiting physical validation. No camera connection, decoder
-choice, reconnect recovery, or latency conclusion is complete until it is tested on the
-primary Fire TV and camera.
+Physical validation has confirmed Media3 RTSP/TCP playback from the primary camera,
+selection of `OMX.MTK.VIDEO.DECODER.AVC`, and approximately 3.3–4.7 second startup
+timing. It also observed approximately one second live-view delay. ATV-01 remains
+incomplete: extended playback, progressive-lag testing, a reliable liveness signal, and
+recovery after actual camera/network loss are still pending physical validation.
 
 ## ATV-02 — Correct camera audio
 
