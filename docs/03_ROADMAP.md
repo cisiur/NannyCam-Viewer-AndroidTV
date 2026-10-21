@@ -63,8 +63,9 @@ Do not make the malformed audio track a reason to discard a working hardware vid
 Exit: physical TV device displays stable live video with no progressive delay.
 
 Physical validation has confirmed Media3 RTSP/TCP playback from the primary camera,
-selection of `OMX.MTK.VIDEO.DECODER.AVC`, and approximately 3.3–4.7 second startup
-timing. It also observed approximately one second live-view delay. ATV-01 remains
+selection of `OMX.MTK.VIDEO.DECODER.AVC`, and approximately 2.7–4.7 second startup
+timing. It also observed approximately one second live-view delay and no short-run
+progressive delay. ATV-01 remains
 incomplete: extended playback, progressive-lag testing, a reliable liveness signal, and
 recovery after actual camera/network loss are still pending physical validation.
 
@@ -72,16 +73,16 @@ recovery after actual camera/network loss are still pending physical validation.
 
 Goal: play the camera's real PCM16 LE audio despite the incorrect PCMA SDP declaration.
 
-- [ ] obtain raw payload bytes before PCMA decoding
-- [ ] reinterpret payload as PCM16 LE 8 kHz mono
-- [ ] implement one-byte packet carry
-- [ ] add 120 Hz first-order high-pass filter
-- [ ] add fixed +10 dB gain with saturation
-- [ ] play through an appropriate Android audio output path
-- [ ] keep the audio buffer bounded
-- [ ] recover toward live by dropping stale audio when needed
-- [ ] keep audio lifecycle independent from video
-- [ ] add mute/unmute
+- [~] obtain raw RTP payload bytes before PCMA decoding
+- [~] reinterpret payload as PCM16 LE 8 kHz mono
+- [~] implement one-byte packet carry
+- [~] add 120 Hz first-order high-pass filter
+- [~] add fixed +10 dB gain with saturation
+- [~] play through an appropriate Android audio output path
+- [~] keep the audio buffer bounded
+- [~] recover toward live by dropping stale audio when needed
+- [~] keep audio lifecycle independent from video
+- [~] add remote-accessible mute/unmute and raw/processed comparison control
 - [ ] physically validate speech clarity
 - [ ] physically validate long-running audio latency
 - [ ] physically validate audio recovery after connection loss
@@ -91,6 +92,12 @@ Likely architecture decision:
 If Media3 gives good video but cannot expose this malformed raw audio payload correctly, retain Media3 for video and implement a separate lightweight RTSP/RTP audio path.
 
 Exit: clear live camera audio matching the previously validated PCM16 interpretation.
+
+ATV-02 has a separate, camera-specific RTSP/TCP audio implementation awaiting physical
+validation. It intentionally bypasses the SDP's PCMA declaration and sends the selected
+audio RTP payload to PCM16LE interpretation instead. Raw PCM intelligibility, processed
+audio quality, mute freshness, A/V relationship, long-run latency, and failure recovery
+remain incomplete until tested on the primary Fire TV and camera.
 
 ## ATV-03 — TV UX and connection resilience
 

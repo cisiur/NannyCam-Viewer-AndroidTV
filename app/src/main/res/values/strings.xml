@@ -20,4 +20,27 @@
     <string name="selected_decoder">Selected video decoder: %1$s</string>
     <string name="first_frame_rendered">First video frame rendered in approximately %1$d ms.</string>
     <string name="runtime_diagnostics">Runtime diagnostics</string>
+    <string name="audio">Audio</string>
+    <string name="audio_stopped">Audio: stopped</string>
+    <string name="audio_connecting">Audio: connecting</string>
+    <string name="audio_playing">Audio: playing</string>
+    <string name="audio_reconnecting">Audio: reconnecting</string>
+    <string name="audio_error_state">Audio: error</string>
+    <string name="audio_error">Audio error: %1$s</string>
+    <string name="mute">Mute</string>
+    <string name="unmute">Unmute</string>
+    <string name="processed_pcm">Processed PCM</string>
+    <string name="raw_pcm">Raw PCM</string>
+    <string name="muted">muted</string>
+    <string name="unmuted">unmuted</string>
+    <string name="processed">processed</string>
+    <string name="raw">raw</string>
+    <string name="not_available">n/a</string>
+    <string name="audio_diagnostics">Audio track: %1$s
+Payload type: %2$s
+RTP packets / payload bytes: %3$d / %4$d
+Latest sequence / discontinuities / old-or-duplicate: %5$s / %6$d / %7$d
+Decoded PCM samples: %8$d
+App buffer / stale drops: %9$d ms / %10$d bytes
+Reconnects / output / mode: %11$d / %12$s / %13$s</string>
 </resources>

@@ -14,6 +14,9 @@ import androidx.media3.ui.PlayerView
 import com.cisiur.nannycamviewer.R
 import com.cisiur.nannycamviewer.config.CameraEndpointNormalizer
 import com.cisiur.nannycamviewer.config.CameraEndpointStore
+import com.cisiur.nannycamviewer.audio.AudioConnectionState
+import com.cisiur.nannycamviewer.audio.AudioDiagnostics
+import com.cisiur.nannycamviewer.audio.AudioPlaybackController
 import com.cisiur.nannycamviewer.platform.PlatformDiagnostics
 import com.cisiur.nannycamviewer.platform.PlatformDiagnosticsFormatter
 import com.cisiur.nannycamviewer.playback.ConnectionState
@@ -30,6 +33,11 @@ class MainActivity : Activity() {
     private lateinit var statusText: TextView
     private lateinit var decoderText: TextView
     private lateinit var playbackController: VideoPlaybackController
+    private lateinit var audioStateText: TextView
+    private lateinit var audioDiagnosticsText: TextView
+    private lateinit var muteButton: Button
+    private lateinit var processingButton: Button
+    private lateinit var audioPlaybackController: AudioPlaybackController
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -44,6 +52,10 @@ class MainActivity : Activity() {
         disconnectButton = findViewById(R.id.disconnect_button)
         statusText = findViewById(R.id.status_text)
         decoderText = findViewById(R.id.decoder_text)
+        audioStateText = findViewById(R.id.audio_state_text)
+        audioDiagnosticsText = findViewById(R.id.audio_diagnostics_text)
+        muteButton = findViewById(R.id.mute_button)
+        processingButton = findViewById(R.id.processing_button)
 
         endpointStore.load()?.let(endpointInput::setText)
         playbackController = VideoPlaybackController(
@@ -65,10 +77,35 @@ class MainActivity : Activity() {
                 }
             }
         )
+        audioPlaybackController = AudioPlaybackController(
+            this,
+            object : AudioPlaybackController.Listener {
+                override fun onAudioStateChanged(state: AudioConnectionState) = updateAudioState(state)
+
+                override fun onAudioError(message: String) {
+                    configurationMessage.text = getString(R.string.audio_error, message)
+                }
+
+                override fun onAudioDiagnostics(diagnostics: AudioDiagnostics) {
+                    audioDiagnosticsText.text = formatAudioDiagnostics(diagnostics)
+                }
+            }
+        )
 
         saveButton.setOnClickListener { saveEndpoint() }
         connectButton.setOnClickListener { connectSavedEndpoint() }
-        disconnectButton.setOnClickListener { playbackController.disconnect() }
+        disconnectButton.setOnClickListener {
+            playbackController.disconnect()
+            audioPlaybackController.disconnect()
+        }
+        muteButton.setOnClickListener {
+            audioPlaybackController.toggleMute()
+            updateAudioState(audioPlaybackController.connectionState)
+        }
+        processingButton.setOnClickListener {
+            audioPlaybackController.toggleProcessing()
+            updateAudioState(audioPlaybackController.connectionState)
+        }
         endpointInput.setOnEditorActionListener { _, actionId, event ->
             if (actionId == EditorInfo.IME_ACTION_DONE ||
                 (event?.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_UP)
@@ -82,10 +119,12 @@ class MainActivity : Activity() {
         findViewById<TextView>(R.id.diagnostics_text).text =
             PlatformDiagnosticsFormatter.format(PlatformDiagnostics.collect(this))
         updatePlaybackState(ConnectionState.NOT_CONNECTED)
+        updateAudioState(AudioConnectionState.STOPPED)
     }
 
     override fun onStop() {
         playbackController.releaseForLifecycle()
+        audioPlaybackController.releaseForLifecycle()
         super.onStop()
     }
 
@@ -111,6 +150,7 @@ class MainActivity : Activity() {
         val result = configuredEndpoint?.let(CameraEndpointNormalizer::normalize)
         if (result is CameraEndpointNormalizer.Result.Valid) {
             playbackController.connect(result.uri)
+            audioPlaybackController.connect(result.uri)
         } else {
             statusText.text = getString(R.string.error_status, getString(R.string.save_endpoint_first))
             connectButton.isEnabled = false
@@ -138,6 +178,42 @@ class MainActivity : Activity() {
         connectButton.isEnabled = state == ConnectionState.NOT_CONNECTED && hasValidSavedEndpoint()
         disconnectButton.isEnabled = state != ConnectionState.NOT_CONNECTED
     }
+
+    private fun updateAudioState(state: AudioConnectionState) {
+        audioStateText.text = when (state) {
+            AudioConnectionState.STOPPED -> getString(R.string.audio_stopped)
+            AudioConnectionState.CONNECTING -> getString(R.string.audio_connecting)
+            AudioConnectionState.PLAYING -> getString(R.string.audio_playing)
+            AudioConnectionState.RECONNECTING -> getString(R.string.audio_reconnecting)
+            AudioConnectionState.ERROR -> getString(R.string.audio_error_state)
+        }
+        val active = state != AudioConnectionState.STOPPED
+        muteButton.isEnabled = active
+        processingButton.isEnabled = active
+        muteButton.text = getString(
+            if (audioPlaybackController.isMuted()) R.string.unmute else R.string.mute
+        )
+        processingButton.text = getString(
+            if (audioPlaybackController.isProcessingEnabled()) R.string.processed_pcm else R.string.raw_pcm
+        )
+    }
+
+    private fun formatAudioDiagnostics(diagnostics: AudioDiagnostics): String = getString(
+        R.string.audio_diagnostics,
+        diagnostics.controlUri ?: getString(R.string.not_available),
+        diagnostics.payloadType?.toString() ?: getString(R.string.not_available),
+        diagnostics.packetsReceived,
+        diagnostics.payloadBytesReceived,
+        diagnostics.latestSequenceNumber?.toString() ?: getString(R.string.not_available),
+        diagnostics.sequenceDiscontinuities,
+        diagnostics.duplicateOrOutOfOrderPackets,
+        diagnostics.decodedSamples,
+        diagnostics.bufferedDurationMs,
+        diagnostics.staleDroppedBytes,
+        diagnostics.reconnectCount,
+        if (diagnostics.muted) getString(R.string.muted) else getString(R.string.unmuted),
+        if (diagnostics.processingEnabled) getString(R.string.processed) else getString(R.string.raw)
+    )
 
     private fun hasValidSavedEndpoint(): Boolean =
         endpointStore.load()?.let(CameraEndpointNormalizer::normalize) is CameraEndpointNormalizer.Result.Valid

@@ -102,6 +102,43 @@
         <TextView
             style="@style/NannyCamSectionHeading"
             android:layout_marginTop="28dp"
+            android:text="@string/audio" />
+
+        <TextView
+            android:id="@+id/audio_state_text"
+            style="@style/NannyCamStatus"
+            android:text="@string/audio_stopped" />
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/mute_button"
+                style="@style/NannyCamButton"
+                android:enabled="false"
+                android:text="@string/mute" />
+
+            <Button
+                android:id="@+id/processing_button"
+                style="@style/NannyCamButton"
+                android:layout_marginStart="16dp"
+                android:enabled="false"
+                android:text="@string/processed_pcm" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/audio_diagnostics_text"
+            style="@style/NannyCamDiagnostics"
+            android:layout_marginTop="12dp"
+            android:focusable="false"
+            android:textIsSelectable="false" />
+
+        <TextView
+            style="@style/NannyCamSectionHeading"
+            android:layout_marginTop="28dp"
             android:text="@string/runtime_diagnostics" />
 
         <TextView

@@ -54,6 +54,7 @@ initial SDP failure above did recover through the existing reconnect policy.
 
 The controller logs the Connect request and first rendered frame, and displays an
 approximate startup latency. Physical tests observed successful Connect-to-first-frame
-times of approximately 3.3–4.7 seconds and a live-view delay of approximately one second
-after playback began. Long-run latency and progressive-lag testing over 15–30 minutes
-remain pending; no stability conclusion can be made from automated tests or short runs.
+times of approximately 2.7–4.7 seconds and a live-view delay of approximately one second
+after playback began. No short-run progressive delay was observed. Long-run latency and
+progressive-lag testing over 15–30 minutes remain pending; no long-run stability conclusion
+can be made from automated tests or short runs.
