@@ -29,9 +29,9 @@ class VideoPlaybackController(
 ) {
     interface Listener {
         fun onConnectionStateChanged(state: ConnectionState)
-        fun onSelectedVideoDecoder(decoderName: String)
-        fun onPlaybackError(message: String)
-        fun onFirstFrameRendered(startupLatencyMs: Long)
+        fun onSelectedVideoDecoder(decoderName: String, attemptId: Long)
+        fun onPlaybackError(message: String, attemptId: Long)
+        fun onFirstFrameRendered(startupLatencyMs: Long, attemptId: Long)
     }
 
     private val appContext = context.applicationContext
@@ -183,7 +183,7 @@ class VideoPlaybackController(
                 }
                 val startupLatencyMs = elapsedSinceAttemptMs(attemptId)
                 Log.i(TAG, "First video frame rendered after ${startupLatencyMs}ms")
-                listener.onFirstFrameRendered(startupLatencyMs)
+                listener.onFirstFrameRendered(startupLatencyMs, attemptId)
             }
         }
 
@@ -206,7 +206,7 @@ class VideoPlaybackController(
                 TAG,
                 "Selected video decoder: $decoderName after ${elapsedSinceAttemptMs(attemptId)}ms"
             )
-            listener.onSelectedVideoDecoder(decoderName)
+            listener.onSelectedVideoDecoder(decoderName, attemptId)
         }
     }
 
@@ -216,7 +216,7 @@ class VideoPlaybackController(
     private fun handlePlaybackFailure(message: String, attemptId: Long = playerAttemptId) {
         if (!connectIntent || attemptId != playerAttemptId) return
         cancelFirstFrameTimeout()
-        listener.onPlaybackError(message)
+        listener.onPlaybackError(message, attemptId)
         releasePlayer()
         stateMachine.playbackFailed()
         notifyState()

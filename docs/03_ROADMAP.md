@@ -53,7 +53,7 @@ Plan:
 - [x] physically verify first-frame startup-hang recovery
 - [~] reduce stalled-start recovery timeout based on physical startup measurements
 - [~] evaluate low-latency Media3 buffering with a physical A/B mode
-- [~] physically evaluate staggered initial video/audio RTSP negotiation to reduce cold-start SDP failures
+- [~] evaluate staggered initial video/audio RTSP negotiation: decoder-gated startup avoided SDP failure in one run but produced persistent green video; first-frame + 250 ms experiment awaits physical validation
 - [ ] measure latency after extended playback
 - [ ] confirm no progressive lag
 - [~] implement explicit Disconnect/resource release

@@ -1,41 +1,93 @@
 package com.cisiur.nannycamviewer.ui
 
 /**
- * Session-scoped gate for the initial independent audio RTSP connection.
+ * Pure, session-scoped decision model for initially starting the independent audio connection.
  *
- * It deliberately knows nothing about either player implementation: the Activity starts video
- * first, then consumes the gate from Media3's decoder-initialized callback.
+ * First-frame callbacks are used only as a later sequencing milestone. They do not establish
+ * that Media3 has produced a visually valid camera image.
  */
 class ViewerAudioStartupGate {
-    sealed class Decision {
-        data class StartAudio(val uri: String) : Decision()
-        object AlreadyStarted : Decision()
-        object NoActiveSession : Decision()
+    sealed class DecoderDecision {
+        object AudioRemainsGated : DecoderDecision()
+        object NoActiveSession : DecoderDecision()
+    }
+
+    sealed class FirstFrameDecision {
+        data class ScheduleAudio(val token: Long) : FirstFrameDecision()
+        object AlreadyScheduled : FirstFrameDecision()
+        object AlreadyStarted : FirstFrameDecision()
+        object IgnoredFailedAttempt : FirstFrameDecision()
+        object NoActiveSession : FirstFrameDecision()
+    }
+
+    sealed class VideoFailureDecision {
+        object CancelPendingAudioStart : VideoFailureDecision()
+        object AudioRemainsGated : VideoFailureDecision()
+        object AudioAlreadyStarted : VideoFailureDecision()
+        object NoActiveSession : VideoFailureDecision()
+    }
+
+    sealed class DelayedStartDecision {
+        data class StartAudio(val uri: String) : DelayedStartDecision()
+        object IgnoredStaleCallback : DelayedStartDecision()
     }
 
     private var viewerUri: String? = null
     private var audioStartedForSession = false
+    private var scheduledAudioToken: Long? = null
+    private var nextAudioToken = 0L
+    private var lastFailedVideoAttemptId = Long.MIN_VALUE
 
     fun beginSession(uri: String) {
         viewerUri = uri
         audioStartedForSession = false
+        scheduledAudioToken = null
+        lastFailedVideoAttemptId = Long.MIN_VALUE
     }
 
-    fun onVideoDecoderInitialized(): Decision {
-        val uri = viewerUri ?: return Decision.NoActiveSession
-        if (audioStartedForSession) return Decision.AlreadyStarted
+    fun onVideoDecoderInitialized(): DecoderDecision =
+        if (viewerUri == null) DecoderDecision.NoActiveSession else DecoderDecision.AudioRemainsGated
 
+    fun onVideoFirstFrame(attemptId: Long): FirstFrameDecision {
+        if (viewerUri == null) return FirstFrameDecision.NoActiveSession
+        if (attemptId <= lastFailedVideoAttemptId) return FirstFrameDecision.IgnoredFailedAttempt
+        if (audioStartedForSession) return FirstFrameDecision.AlreadyStarted
+        if (scheduledAudioToken != null) return FirstFrameDecision.AlreadyScheduled
+
+        val token = ++nextAudioToken
+        scheduledAudioToken = token
+        return FirstFrameDecision.ScheduleAudio(token)
+    }
+
+    fun onVideoFailure(attemptId: Long): VideoFailureDecision {
+        if (viewerUri == null) return VideoFailureDecision.NoActiveSession
+        lastFailedVideoAttemptId = maxOf(lastFailedVideoAttemptId, attemptId)
+        if (audioStartedForSession) return VideoFailureDecision.AudioAlreadyStarted
+        if (scheduledAudioToken != null) {
+            scheduledAudioToken = null
+            return VideoFailureDecision.CancelPendingAudioStart
+        }
+        return VideoFailureDecision.AudioRemainsGated
+    }
+
+    fun consumeDelayedAudioStart(token: Long): DelayedStartDecision {
+        val uri = viewerUri
+        if (uri == null || scheduledAudioToken != token || audioStartedForSession) {
+            return DelayedStartDecision.IgnoredStaleCallback
+        }
+        scheduledAudioToken = null
         audioStartedForSession = true
-        return Decision.StartAudio(uri)
+        return DelayedStartDecision.StartAudio(uri)
     }
-
-    fun isAudioStartPending(): Boolean = viewerUri != null && !audioStartedForSession
-
-    /** Video failures do not consume or reset a pending initial audio start. */
-    fun remainsGatedAfterVideoFailure(): Boolean = isAudioStartPending()
 
     fun reset() {
         viewerUri = null
         audioStartedForSession = false
+        scheduledAudioToken = null
+        lastFailedVideoAttemptId = Long.MIN_VALUE
+    }
+
+    companion object {
+        const val INITIAL_AUDIO_AFTER_FIRST_FRAME_DELAY_MS = 250L
     }
 }

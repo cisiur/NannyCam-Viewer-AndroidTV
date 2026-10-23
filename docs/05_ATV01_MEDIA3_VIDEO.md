@@ -103,14 +103,27 @@ Media3 `IllegalArgumentException: missing attribute fmtp` SDP failures: three vi
 failed before a fourth succeeded. The retries, rather than `LoadControl`, were the main cause
 of the long first startup.
 
-This experiment retains two independent RTSP/TCP sessions. On a fresh viewer connection,
-the Activity starts Media3 video first and gates the one initial custom-audio connection on
-Media3's `onVideoDecoderInitialized` callback. That milestone means Media3 has parsed enough
-RTSP/SDP to initialize the H.264 decoder; it does not wait for the first rendered frame. If
-video fails before decoder initialization, audio remains stopped while normal video retries
-continue. Once audio has been started for the viewer session, its lifecycle and recovery stay
-independent through later video reconnects. Physical validation is required before treating
-staggered negotiation as a fix for the cold-start SDP failures.
+The decoder-gated experiment had a mixed first physical result. On a fresh app launch, video
+succeeded on attempt #1 and did not reproduce `missing attribute fmtp`; the hardware decoder
+initialized at approximately 560 ms, Media3 reported its first-frame callback at approximately
+2.19 seconds, and `STATE_READY` at approximately 2.24 seconds. Audio also started and its
+keepalive continued normally. This is one encouraging run, not proof that the SDP issue is
+fixed.
+
+Critically, the visible output in that entire session was a solid/mostly solid green rectangle.
+No valid camera image appeared during more than two minutes of playback despite the decoder,
+first-frame, and READY callbacks. Consequently, `onRenderedFirstFrame()` and `STATE_READY`
+must not be treated as evidence that the decoded camera picture is visually valid on this
+camera/device combination.
+
+This experiment still retains two independent RTSP/TCP sessions. The previous version started
+the one initial custom-audio connection immediately after `onVideoDecoderInitialized`. The
+next version instead uses first-frame only as a later *sequencing milestone*, then waits 250 ms
+before starting audio. Decoder initialization alone now leaves audio gated. If the video attempt
+fails before first frame, or fails during that stabilization delay, pending audio startup is
+cancelled and a later replacement attempt may schedule it again. Once audio starts, its lifecycle
+and recovery remain independent through later video reconnects. Physical validation is required;
+this change does not claim to fix either the SDP failures or persistent green video.
 
 ## Display idle behavior
 

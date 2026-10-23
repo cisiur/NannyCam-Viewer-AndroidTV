@@ -1,64 +1,86 @@
 package com.cisiur.nannycamviewer.ui
 
-import org.junit.Assert.assertFalse
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ViewerAudioStartupGateTest {
     @Test
-    fun `new viewer session keeps audio gated until decoder initialization`() {
-        val gate = ViewerAudioStartupGate()
-
-        gate.beginSession("rtsp://camera/streamtype=0")
-
-        assertTrue(gate.isAudioStartPending())
-        assertTrue(gate.onVideoDecoderInitialized() is ViewerAudioStartupGate.Decision.StartAudio)
-    }
-
-    @Test
-    fun `decoder initialization starts audio exactly once`() {
+    fun `decoder initialization keeps initial audio gated`() {
         val gate = ViewerAudioStartupGate()
         gate.beginSession("rtsp://camera/streamtype=0")
 
-        val first = gate.onVideoDecoderInitialized()
-        val duplicate = gate.onVideoDecoderInitialized()
-
-        assertTrue(first is ViewerAudioStartupGate.Decision.StartAudio)
-        assertFalse(gate.isAudioStartPending())
-        assertTrue(duplicate is ViewerAudioStartupGate.Decision.AlreadyStarted)
+        assertTrue(gate.onVideoDecoderInitialized() is ViewerAudioStartupGate.DecoderDecision.AudioRemainsGated)
+        assertTrue(gate.onVideoFirstFrame(1) is ViewerAudioStartupGate.FirstFrameDecision.ScheduleAudio)
     }
 
     @Test
-    fun `failed video attempts before decoder leave audio pending for a later attempt`() {
+    fun `first frame schedules audio which starts only when delayed token is consumed`() {
+        val gate = ViewerAudioStartupGate()
+        gate.beginSession("rtsp://camera/streamtype=0")
+        val scheduled = gate.onVideoFirstFrame(1) as ViewerAudioStartupGate.FirstFrameDecision.ScheduleAudio
+
+        assertEquals(250L, ViewerAudioStartupGate.INITIAL_AUDIO_AFTER_FIRST_FRAME_DELAY_MS)
+        assertTrue(gate.consumeDelayedAudioStart(scheduled.token) is ViewerAudioStartupGate.DelayedStartDecision.StartAudio)
+    }
+
+    @Test
+    fun `duplicate decoder and first frame events do not duplicate audio startup`() {
         val gate = ViewerAudioStartupGate()
         gate.beginSession("rtsp://camera/streamtype=0")
 
-        assertTrue(gate.remainsGatedAfterVideoFailure())
-        assertTrue(gate.remainsGatedAfterVideoFailure())
-        assertTrue(gate.onVideoDecoderInitialized() is ViewerAudioStartupGate.Decision.StartAudio)
+        gate.onVideoDecoderInitialized()
+        gate.onVideoDecoderInitialized()
+        val scheduled = gate.onVideoFirstFrame(1) as ViewerAudioStartupGate.FirstFrameDecision.ScheduleAudio
+        assertTrue(gate.onVideoFirstFrame(1) is ViewerAudioStartupGate.FirstFrameDecision.AlreadyScheduled)
+        gate.consumeDelayedAudioStart(scheduled.token)
+
+        assertTrue(gate.onVideoFirstFrame(2) is ViewerAudioStartupGate.FirstFrameDecision.AlreadyStarted)
     }
 
     @Test
-    fun `disconnect prevents stale decoder callback and fresh session gets a new gate`() {
+    fun `failure before first frame leaves audio gated for a retry`() {
+        val gate = ViewerAudioStartupGate()
+        gate.beginSession("rtsp://camera/streamtype=0")
+
+        assertTrue(gate.onVideoFailure(1) is ViewerAudioStartupGate.VideoFailureDecision.AudioRemainsGated)
+        assertTrue(gate.onVideoFirstFrame(1) is ViewerAudioStartupGate.FirstFrameDecision.IgnoredFailedAttempt)
+        assertTrue(gate.onVideoFirstFrame(2) is ViewerAudioStartupGate.FirstFrameDecision.ScheduleAudio)
+    }
+
+    @Test
+    fun `failure during delay invalidates stale delayed callback and later retry can schedule`() {
+        val gate = ViewerAudioStartupGate()
+        gate.beginSession("rtsp://camera/streamtype=0")
+        val first = gate.onVideoFirstFrame(1) as ViewerAudioStartupGate.FirstFrameDecision.ScheduleAudio
+
+        assertTrue(gate.onVideoFailure(1) is ViewerAudioStartupGate.VideoFailureDecision.CancelPendingAudioStart)
+        assertTrue(gate.consumeDelayedAudioStart(first.token) is ViewerAudioStartupGate.DelayedStartDecision.IgnoredStaleCallback)
+        assertTrue(gate.onVideoFirstFrame(2) is ViewerAudioStartupGate.FirstFrameDecision.ScheduleAudio)
+    }
+
+    @Test
+    fun `disconnect or lifecycle reset invalidates delayed callback and fresh session works`() {
         val gate = ViewerAudioStartupGate()
         gate.beginSession("rtsp://first/streamtype=0")
+        val first = gate.onVideoFirstFrame(1) as ViewerAudioStartupGate.FirstFrameDecision.ScheduleAudio
         gate.reset()
 
-        assertTrue(gate.onVideoDecoderInitialized() is ViewerAudioStartupGate.Decision.NoActiveSession)
-
+        assertTrue(gate.consumeDelayedAudioStart(first.token) is ViewerAudioStartupGate.DelayedStartDecision.IgnoredStaleCallback)
         gate.beginSession("rtsp://second/streamtype=0")
-        val decision = gate.onVideoDecoderInitialized()
-        assertTrue(decision is ViewerAudioStartupGate.Decision.StartAudio)
-        assertTrue((decision as ViewerAudioStartupGate.Decision.StartAudio).uri.contains("second"))
+        val second = gate.onVideoFirstFrame(2) as ViewerAudioStartupGate.FirstFrameDecision.ScheduleAudio
+        val start = gate.consumeDelayedAudioStart(second.token) as ViewerAudioStartupGate.DelayedStartDecision.StartAudio
+        assertTrue(start.uri.contains("second"))
     }
 
     @Test
-    fun `later video reconnect events cannot restart already started audio`() {
+    fun `later video failure after audio start leaves independent audio start consumed`() {
         val gate = ViewerAudioStartupGate()
         gate.beginSession("rtsp://camera/streamtype=0")
-        gate.onVideoDecoderInitialized()
+        val scheduled = gate.onVideoFirstFrame(1) as ViewerAudioStartupGate.FirstFrameDecision.ScheduleAudio
+        gate.consumeDelayedAudioStart(scheduled.token)
 
-        assertFalse(gate.remainsGatedAfterVideoFailure())
-        assertTrue(gate.onVideoDecoderInitialized() is ViewerAudioStartupGate.Decision.AlreadyStarted)
+        assertTrue(gate.onVideoFailure(2) is ViewerAudioStartupGate.VideoFailureDecision.AudioAlreadyStarted)
+        assertTrue(gate.onVideoFirstFrame(3) is ViewerAudioStartupGate.FirstFrameDecision.AlreadyStarted)
     }
 }

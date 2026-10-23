@@ -66,8 +66,10 @@ closure did not recur during the observed multi-minute run.
 ### Initial viewer startup sequencing experiment
 
 For a narrow cold-start RTSP negotiation experiment, the Activity starts the independent
-Media3 video session first and starts this custom audio session only after Media3 reports its
-first video decoder initialization. This is not a shared socket or a change to the audio RTSP
+Media3 video session first and initially gates this custom audio session until Media3 reports
+its first-frame callback plus a fixed 250 ms stabilization delay. Decoder initialization alone
+does not start audio. The first-frame callback is used only as a sequencing milestone, not as
+proof that the visible video is valid. This is not a shared socket or a change to the audio RTSP
 implementation. Once the initial audio connection has been requested, its playback, failure,
 and reconnect lifecycle remain independent from later video reconnects.
 

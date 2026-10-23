@@ -2,6 +2,8 @@ package com.cisiur.nannycamviewer.ui
 
 import android.app.Activity
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.KeyEvent
 import android.view.WindowManager
@@ -43,6 +45,8 @@ class MainActivity : Activity() {
     private lateinit var videoBufferingButton: Button
     private lateinit var audioPlaybackController: AudioPlaybackController
     private val audioStartupGate = ViewerAudioStartupGate()
+    private val startupHandler = Handler(Looper.getMainLooper())
+    private var pendingInitialAudioStart: Runnable? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -70,31 +74,52 @@ class MainActivity : Activity() {
             object : VideoPlaybackController.Listener {
                 override fun onConnectionStateChanged(state: ConnectionState) = updatePlaybackState(state)
 
-                override fun onSelectedVideoDecoder(decoderName: String) {
+                override fun onSelectedVideoDecoder(decoderName: String, attemptId: Long) {
                     decoderText.text = getString(R.string.selected_decoder, decoderName)
-                    when (val decision = audioStartupGate.onVideoDecoderInitialized()) {
-                        is ViewerAudioStartupGate.Decision.StartAudio -> {
-                            Log.i(TAG, "Video decoder initialized; starting initial audio session")
-                            audioPlaybackController.connect(decision.uri)
+                    when (audioStartupGate.onVideoDecoderInitialized()) {
+                        ViewerAudioStartupGate.DecoderDecision.AudioRemainsGated -> {
+                            Log.i(TAG, "Video decoder initialized for attempt #$attemptId; audio remains gated")
                         }
-                        ViewerAudioStartupGate.Decision.AlreadyStarted -> {
-                            Log.i(TAG, "Initial audio already started for viewer session; ignoring duplicate decoder callback")
-                        }
-                        ViewerAudioStartupGate.Decision.NoActiveSession -> {
+                        ViewerAudioStartupGate.DecoderDecision.NoActiveSession -> {
                             Log.i(TAG, "Ignoring decoder callback without an active viewer session")
                         }
                     }
                 }
 
-                override fun onPlaybackError(message: String) {
+                override fun onPlaybackError(message: String, attemptId: Long) {
                     statusText.text = getString(R.string.error_status, message)
-                    if (audioStartupGate.remainsGatedAfterVideoFailure()) {
-                        Log.i(TAG, "Video attempt failed before audio start; audio remains gated")
+                    when (audioStartupGate.onVideoFailure(attemptId)) {
+                        ViewerAudioStartupGate.VideoFailureDecision.CancelPendingAudioStart -> {
+                            cancelPendingInitialAudioStart()
+                            Log.i(TAG, "Video failed before initial audio start; pending audio start cancelled")
+                        }
+                        ViewerAudioStartupGate.VideoFailureDecision.AudioRemainsGated -> {
+                            Log.i(TAG, "Video attempt failed before first frame; audio remains gated")
+                        }
+                        ViewerAudioStartupGate.VideoFailureDecision.AudioAlreadyStarted -> Unit
+                        ViewerAudioStartupGate.VideoFailureDecision.NoActiveSession -> Unit
                     }
                 }
 
-                override fun onFirstFrameRendered(startupLatencyMs: Long) {
+                override fun onFirstFrameRendered(startupLatencyMs: Long, attemptId: Long) {
                     configurationMessage.text = getString(R.string.first_frame_rendered, startupLatencyMs)
+                    when (val decision = audioStartupGate.onVideoFirstFrame(attemptId)) {
+                        is ViewerAudioStartupGate.FirstFrameDecision.ScheduleAudio -> {
+                            scheduleInitialAudioStart(decision.token)
+                        }
+                        ViewerAudioStartupGate.FirstFrameDecision.AlreadyScheduled -> {
+                            Log.i(TAG, "Initial audio start already scheduled; ignoring duplicate first-frame callback")
+                        }
+                        ViewerAudioStartupGate.FirstFrameDecision.AlreadyStarted -> {
+                            Log.i(TAG, "Initial audio already started; ignoring later first-frame callback")
+                        }
+                        ViewerAudioStartupGate.FirstFrameDecision.IgnoredFailedAttempt -> {
+                            Log.i(TAG, "Ignoring first-frame callback from a failed video attempt")
+                        }
+                        ViewerAudioStartupGate.FirstFrameDecision.NoActiveSession -> {
+                            Log.i(TAG, "Ignoring first-frame callback without an active viewer session")
+                        }
+                    }
                 }
             }
         )
@@ -179,8 +204,9 @@ class MainActivity : Activity() {
         val configuredEndpoint = endpointStore.load()
         val result = configuredEndpoint?.let(CameraEndpointNormalizer::normalize)
         if (result is CameraEndpointNormalizer.Result.Valid) {
+            cancelPendingInitialAudioStart()
             audioStartupGate.beginSession(result.uri)
-            Log.i(TAG, "Viewer session connect: video starts first; audio start gated")
+            Log.i(TAG, "Viewer session connect: video starts first; audio gated until first frame")
             playbackController.connect(result.uri)
         } else {
             statusText.text = getString(R.string.error_status, getString(R.string.save_endpoint_first))
@@ -220,8 +246,37 @@ class MainActivity : Activity() {
     }
 
     private fun resetAudioStartupGate(message: String) {
+        cancelPendingInitialAudioStart()
         audioStartupGate.reset()
         Log.i(TAG, message)
+    }
+
+    private fun scheduleInitialAudioStart(token: Long) {
+        cancelPendingInitialAudioStart()
+        val runnable = Runnable {
+            pendingInitialAudioStart = null
+            when (val decision = audioStartupGate.consumeDelayedAudioStart(token)) {
+                is ViewerAudioStartupGate.DelayedStartDecision.StartAudio -> {
+                    Log.i(TAG, "Initial audio stabilization delay elapsed; starting audio")
+                    audioPlaybackController.connect(decision.uri)
+                }
+                ViewerAudioStartupGate.DelayedStartDecision.IgnoredStaleCallback -> {
+                    Log.i(TAG, "Ignoring stale delayed initial audio start")
+                }
+            }
+        }
+        pendingInitialAudioStart = runnable
+        startupHandler.postDelayed(runnable, ViewerAudioStartupGate.INITIAL_AUDIO_AFTER_FIRST_FRAME_DELAY_MS)
+        Log.i(
+            TAG,
+            "First video-frame callback received; scheduling initial audio in " +
+                "${ViewerAudioStartupGate.INITIAL_AUDIO_AFTER_FIRST_FRAME_DELAY_MS}ms"
+        )
+    }
+
+    private fun cancelPendingInitialAudioStart() {
+        pendingInitialAudioStart?.let(startupHandler::removeCallbacks)
+        pendingInitialAudioStart = null
     }
 
     private fun updateAudioState(state: AudioConnectionState) {
