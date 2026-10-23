@@ -53,7 +53,10 @@ decoder but remained in `BUFFERING`, with neither a rendered first frame nor
 startup timeout for each player attempt. A rendered first frame cancels it immediately;
 expiry releases that attempt and enters the existing reconnect sequence. This is not a
 continuous playback/frame-progress watchdog: after the first frame, the application keeps
-no video liveness timer active. The corrective still requires physical validation.
+no video liveness timer active. Physical validation confirmed this corrective: an occasional
+first attempt stalled before first frame, the 10-second timeout released it, the existing
+one-second reconnect ran, and the replacement attempt rendered its first frame in
+approximately 1.47 seconds.
 
 Recovery after actual camera or network loss still requires physical validation. The
 initial SDP failure above did recover through the existing reconnect policy.
@@ -62,7 +65,16 @@ initial SDP failure above did recover through the existing reconnect policy.
 
 The controller logs the Connect request and first rendered frame, and displays an
 approximate startup latency. Physical tests observed successful Connect-to-first-frame
-times of approximately 2.7–4.7 seconds and a live-view delay of approximately one second
-after playback began. No short-run progressive delay was observed. Long-run latency and
-progressive-lag testing over 15–30 minutes remain pending; no long-run stability conclusion
-can be made from automated tests or short runs.
+times of approximately 2.7–4.7 seconds; the later replacement attempt above reached its
+first frame in approximately 1.47 seconds. The latest observed video delay was
+approximately 1–2 seconds behind live. No continuous frame-progress watchdog is active.
+Long-run latency and progressive-lag testing over 15–30 minutes remain pending; no long-run
+stability conclusion can be made from automated tests or short runs.
+
+## Display idle behavior
+
+The viewer now applies `FLAG_KEEP_SCREEN_ON` to this Activity's window only while its video
+session intent is connecting, playing, or reconnecting. It is cleared on explicit disconnect
+and Activity stop, so this is not a permanent Fire OS setting and does not claim to suppress
+every possible long-duration system prompt. This corrective awaits physical idle/screensaver
+validation on the target Fire TV.

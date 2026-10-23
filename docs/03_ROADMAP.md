@@ -50,12 +50,14 @@ Plan:
 - [x] verify the physical camera rather than relying on emulator/sample streams
 - [x] verify the selected hardware H.264 decoder and expose selected-decoder diagnostics
 - [x] record physical Connect-to-first-frame startup timing
+- [x] physically verify first-frame startup-hang recovery
 - [ ] measure latency after extended playback
 - [ ] confirm no progressive lag
 - [~] implement explicit Disconnect/resource release
 - [~] add reconnect behavior after basic stream validation
 - [ ] establish a reliable frozen-video liveness signal (the false-positive custom watchdog was removed)
 - [ ] physically verify reconnect after actual camera or network loss
+- [~] keep the viewer display awake for active connect, playback, and reconnect intent
 - [ ] if Media3 is unsuitable, replace only the minimum required RTSP/demux layer
 
 Do not make the malformed audio track a reason to discard a working hardware video path.
@@ -64,8 +66,10 @@ Exit: physical TV device displays stable live video with no progressive delay.
 
 Physical validation has confirmed Media3 RTSP/TCP playback from the primary camera,
 selection of `OMX.MTK.VIDEO.DECODER.AVC`, and approximately 2.7–4.7 second startup
-timing. It also observed approximately one second live-view delay and no short-run
-progressive delay. ATV-01 remains
+timing. The first-frame startup timeout also physically recovered an occasional stalled
+attempt: after 10 seconds it released the player, the one-second retry rendered a first
+frame in approximately 1.47 seconds, and observed video delay was approximately 1–2
+seconds behind live. ATV-01 remains
 incomplete: extended playback, progressive-lag testing, a reliable liveness signal, and
 recovery after actual camera/network loss are still pending physical validation.
 
@@ -83,7 +87,7 @@ Goal: play the camera's real PCM16 LE audio despite the incorrect PCMA SDP decla
 - [~] recover toward live by dropping stale audio when needed
 - [~] keep audio lifecycle independent from video
 - [~] add remote-accessible mute/unmute and raw/processed comparison control
-- [~] add RTSP audio-session keepalive with independent recovery
+- [x] physically validate RTSP audio-session keepalive behavior
 - [x] physically validate basic understandable, effectively live PCM16LE speech
 - [ ] physically validate long-running audio latency
 - [ ] physically validate audio recovery after connection loss
@@ -96,9 +100,12 @@ Exit: clear live camera audio matching the previously validated PCM16 interpreta
 
 ATV-02 has a separate, camera-specific RTSP/TCP audio implementation. Basic Android audio
 is physically confirmed as understandable and effectively live with the PCM16LE path; it
-intentionally bypasses the SDP's PCMA declaration. The RTSP keepalive corrective, processed
-audio quality, mute freshness, A/V relationship, long-run latency, and failure recovery
-remain incomplete until tested on the primary Fire TV and camera.
+intentionally bypasses the SDP's PCMA declaration. The RTSP keepalive is also physically
+confirmed: the camera advertised a 60-second session timeout, 30-second `GET_PARAMETER`
+keepalives were acknowledged repeatedly, and the earlier approximately 60-second closure
+did not recur during the observed multi-minute run. Processed audio quality, mute freshness,
+A/V relationship, long-run latency, and failure recovery remain incomplete until tested on
+the primary Fire TV and camera.
 
 ## ATV-03 — TV UX and connection resilience
 

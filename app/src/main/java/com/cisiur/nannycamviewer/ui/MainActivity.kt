@@ -21,6 +21,7 @@ import com.cisiur.nannycamviewer.platform.PlatformDiagnostics
 import com.cisiur.nannycamviewer.platform.PlatformDiagnosticsFormatter
 import com.cisiur.nannycamviewer.playback.ConnectionState
 import com.cisiur.nannycamviewer.playback.VideoPlaybackController
+import com.cisiur.nannycamviewer.playback.ViewerKeepScreenOnPolicy
 
 @UnstableApi
 class MainActivity : Activity() {
@@ -97,6 +98,7 @@ class MainActivity : Activity() {
         disconnectButton.setOnClickListener {
             playbackController.disconnect()
             audioPlaybackController.disconnect()
+            setViewerKeepScreenOn(false)
         }
         muteButton.setOnClickListener {
             audioPlaybackController.toggleMute()
@@ -123,6 +125,7 @@ class MainActivity : Activity() {
     }
 
     override fun onStop() {
+        setViewerKeepScreenOn(false)
         playbackController.releaseForLifecycle()
         audioPlaybackController.releaseForLifecycle()
         super.onStop()
@@ -166,6 +169,7 @@ class MainActivity : Activity() {
     }
 
     private fun updatePlaybackState(state: ConnectionState) {
+        setViewerKeepScreenOn(ViewerKeepScreenOnPolicy.shouldKeepScreenOn(state))
         if (state != ConnectionState.ERROR) {
             statusText.text = when (state) {
                 ConnectionState.NOT_CONNECTED -> getString(R.string.not_connected)
@@ -177,6 +181,14 @@ class MainActivity : Activity() {
         }
         connectButton.isEnabled = state == ConnectionState.NOT_CONNECTED && hasValidSavedEndpoint()
         disconnectButton.isEnabled = state != ConnectionState.NOT_CONNECTED
+    }
+
+    private fun setViewerKeepScreenOn(enabled: Boolean) {
+        if (enabled) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
     }
 
     private fun updateAudioState(state: AudioConnectionState) {

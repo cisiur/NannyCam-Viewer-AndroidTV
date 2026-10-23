@@ -58,6 +58,11 @@ response or no acknowledgement within five seconds fails only the audio session 
 the existing independent reconnect policy. Socket read timeouts simply wake this loop to
 service/check keepalive; RTP traffic itself continues to satisfy normal socket reads.
 
+Physical validation confirmed the keepalive behavior. The camera advertised a 60-second RTSP
+session timeout, so the client sent its 30-second keepalive interval. Repeated
+`GET_PARAMETER` requests were acknowledged and the prior approximately 60-second server
+closure did not recur during the observed multi-minute run.
+
 ## Interleaved RTP and packet parsing
 
 The streaming parser accepts arbitrary TCP read boundaries. It recognizes both RTSP text
@@ -134,7 +139,8 @@ packet.
 ## Physical validation still required
 
 The basic custom Android PCM16LE audio path is physically confirmed: speech was
-understandable, effectively live, and independent of Media3 video. The new keepalive and
-video startup-timeout correctives are not yet physically validated. Still test processed
-audio quality, mute freshness, A/V relationship, 15–30 minute audio-session stability, and
-independent recovery after camera or network loss on the target Fire TV.
+understandable, effectively live, and independent of Media3 video. Audio and video also ran
+concurrently during the latest physical validation. RTSP keepalive is physically confirmed
+as described above. Still test processed audio quality, mute freshness, A/V relationship,
+15–30 minute audio-session stability, and independent recovery after camera or network loss
+on the target Fire TV.
