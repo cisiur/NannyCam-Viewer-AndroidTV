@@ -47,6 +47,14 @@ working playback. It has therefore been removed rather than replaced with anothe
 speculative watchdog. The five-second `RtspMediaSource` timeout remains a distinct RTSP
 transport/source timeout; it is not an application-level video-frame liveness detector.
 
+Physical testing also exposed a separate startup hang: Media3 initialized the expected
+decoder but remained in `BUFFERING`, with neither a rendered first frame nor
+`onPlayerError`. `VideoPlaybackController` now arms a one-time 10-second first-frame
+startup timeout for each player attempt. A rendered first frame cancels it immediately;
+expiry releases that attempt and enters the existing reconnect sequence. This is not a
+continuous playback/frame-progress watchdog: after the first frame, the application keeps
+no video liveness timer active. The corrective still requires physical validation.
+
 Recovery after actual camera or network loss still requires physical validation. The
 initial SDP failure above did recover through the existing reconnect policy.
 

@@ -15,7 +15,12 @@ not present.
 ## RTSP/TCP audio session
 
 `AudioPlaybackController` owns an independent TCP connection and never recreates the
-working Media3 video player. Its small RTSP client supports only the tested camera flow:
+working Media3 video player. Physical Android testing confirmed that this path produces
+understandable, effectively live PCM16LE speech at a basic-validation level. Physical
+inspection of the Windows reference also confirmed the same intentional architecture: one
+independent RTSP/TCP session for video and another for audio, started near-simultaneously.
+The Android sessions must remain separate. Its small RTSP client supports only the tested
+camera flow:
 
 1. connect the RTSP TCP socket;
 2. `DESCRIBE` with `Accept: application/sdp`;
@@ -34,6 +39,24 @@ socket close is always used to cancel a blocked read.
 This is deliberately not a replacement video RTSP client or a general-purpose RTSP
 library. It does not impose Media3's `fmtp` requirement, so it is independent of the
 earlier Media3 `missing attribute fmtp` observation.
+
+### RTSP session keepalive
+
+Physical Android logs showed the camera closing the custom audio RTSP session after about
+60 seconds of otherwise working playback. The client now maintains the audio session with
+`GET_PARAMETER` over the same TCP socket and never creates a second reader. It parses the
+SETUP `Session` header into a session ID plus optional, case-insensitive `timeout=<seconds>`
+parameter. A valid timeout of at least two seconds schedules keepalive at half that value,
+with a 1-second floor and 30-second cap; no/malformed/pathological timeout uses a 25-second
+fallback. Thus `timeout=60` schedules every 30 seconds.
+
+The authoritative network loop sends `GET_PARAMETER` to the active stream URI with a
+monotonic CSeq and the retained Session header, then keeps reading and parsing both RTP and
+RTSP text. At most one keepalive request can be outstanding. RTP continues to be delivered
+while its response is pending; a matching successful CSeq acknowledges it. A non-2xx
+response or no acknowledgement within five seconds fails only the audio session and uses
+the existing independent reconnect policy. Socket read timeouts simply wake this loop to
+service/check keepalive; RTP traffic itself continues to satisfy normal socket reads.
 
 ## Interleaved RTP and packet parsing
 
@@ -110,8 +133,8 @@ packet.
 
 ## Physical validation still required
 
-No Android physical audio conclusion is implied by this implementation. Test first in raw
-mode for clear PCM16LE speech without PCMA-style crackle. Then compare processed mode for
-the documented 120 Hz rumble reduction and +10 dB level improvement. Also validate mute
-freshness, A/V relationship, 15–30 minute latency behavior, and independent recovery after
-camera or network loss on the target Fire TV.
+The basic custom Android PCM16LE audio path is physically confirmed: speech was
+understandable, effectively live, and independent of Media3 video. The new keepalive and
+video startup-timeout correctives are not yet physically validated. Still test processed
+audio quality, mute freshness, A/V relationship, 15–30 minute audio-session stability, and
+independent recovery after camera or network loss on the target Fire TV.

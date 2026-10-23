@@ -1,5 +1,6 @@
 package com.cisiur.nannycamviewer.audio
 
+import android.util.Log
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.Closeable
@@ -7,9 +8,9 @@ import java.io.EOFException
 import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.net.SocketTimeoutException
 import java.net.URI
 import java.nio.charset.StandardCharsets
-import java.util.Locale
 
 data class AudioSdpTrack(val payloadType: Int, val control: String)
 
@@ -64,6 +65,8 @@ class RtspAudioSession(
     private var output: BufferedOutputStream? = null
     private var cSeq = 1
     private var sessionId: String? = null
+    private var sessionTimeoutSeconds: Int? = null
+    private val keepaliveState = RtspKeepaliveState()
 
     @Throws(IOException::class)
     fun run() {
@@ -105,8 +108,13 @@ class RtspAudioSession(
                 headers = mapOf("Transport" to "RTP/AVP/TCP;unicast;interleaved=0-1")
             )
             requireSuccess(setup, "SETUP")
-            sessionId = setup.header("session")?.substringBefore(';')?.takeIf { it.isNotBlank() }
+            val sessionInfo = RtspSessionHeaderParser.parse(setup.header("session"))
                 ?: throw IOException("SETUP response did not include a Session header")
+            sessionId = sessionInfo.sessionId
+            sessionTimeoutSeconds = sessionInfo.timeoutSeconds
+            if (sessionTimeoutSeconds != null) {
+                Log.i(TAG, "RTSP Session timeout: ${sessionTimeoutSeconds}s")
+            }
 
             val play = requestAndAwait(
                 input,
@@ -116,6 +124,8 @@ class RtspAudioSession(
                 headers = mapOf("Session" to sessionId.orEmpty())
             )
             requireSuccess(play, "PLAY")
+            val keepaliveInterval = keepaliveState.start(System.currentTimeMillis(), sessionTimeoutSeconds)
+            Log.i(TAG, "Audio keepalive scheduled every ${keepaliveInterval / 1_000}s")
             readInterleavedFrames(input, parser)
         } finally {
             sendTeardown()
@@ -128,6 +138,7 @@ class RtspAudioSession(
         runCatching { socket?.close() }
         socket = null
         output = null
+        keepaliveState.reset()
     }
 
     private fun requestAndAwait(
@@ -157,11 +168,22 @@ class RtspAudioSession(
     private fun readInterleavedFrames(input: BufferedInputStream, parser: InterleavedRtspParser) {
         val buffer = ByteArray(READ_BUFFER_BYTES)
         while (!closed) {
-            val count = input.read(buffer)
+            serviceKeepaliveIfDue()
+            val count = try {
+                input.read(buffer)
+            } catch (_: SocketTimeoutException) {
+                // RTP may be temporarily quiet; use this wake-up to service/check RTSP keepalive.
+                serviceKeepaliveIfDue()
+                continue
+            }
             if (count < 0) throw EOFException("RTSP server closed the connection")
             parser.feed(buffer, count).forEach { event ->
-                if (event is InterleavedRtspParser.Event.InterleavedFrame) processInterleavedFrame(event)
+                when (event) {
+                    is InterleavedRtspParser.Event.InterleavedFrame -> processInterleavedFrame(event)
+                    is InterleavedRtspParser.Event.Message -> processStreamingRtspMessage(event)
+                }
             }
+            serviceKeepaliveIfDue()
         }
     }
 
@@ -170,15 +192,32 @@ class RtspAudioSession(
         RtpPacketParser.parse(frame.payload)?.let(onRtpPacket)
     }
 
+    private fun processStreamingRtspMessage(message: InterleavedRtspParser.Event.Message) {
+        val responseCSeq = message.header("cseq")?.toIntOrNull() ?: return
+        if (!keepaliveState.acknowledge(responseCSeq)) return
+        requireSuccess(message, "GET_PARAMETER")
+        Log.i(TAG, "RTSP keepalive acknowledged")
+    }
+
+    private fun serviceKeepaliveIfDue() {
+        val nowMs = System.currentTimeMillis()
+        if (keepaliveState.responseTimedOut(nowMs)) {
+            throw IOException("RTSP GET_PARAMETER keepalive response timed out")
+        }
+        if (!keepaliveState.isDue(nowMs)) return
+        val activeSessionId = sessionId ?: throw IOException("RTSP Session is unavailable for keepalive")
+        Log.i(TAG, "Sending RTSP GET_PARAMETER keepalive")
+        val requestCSeq = sendRequest(
+            method = "GET_PARAMETER",
+            uri = endpointUri,
+            headers = mapOf("Session" to activeSessionId)
+        )
+        keepaliveState.requestSent(requestCSeq, nowMs)
+    }
+
     private fun sendRequest(method: String, uri: String, headers: Map<String, String>): Int {
         val requestCSeq = cSeq++
-        val request = buildString {
-            append(method).append(' ').append(uri).append(" RTSP/1.0\r\n")
-            append("CSeq: ").append(requestCSeq).append("\r\n")
-            append("User-Agent: NannyCamViewerAndroidTV/1.0\r\n")
-            headers.forEach { (name, value) -> append(name).append(": ").append(value).append("\r\n") }
-            append("\r\n")
-        }
+        val request = RtspRequestBuilder.build(method, uri, requestCSeq, headers)
         val activeOutput = output ?: throw IOException("RTSP output is unavailable")
         activeOutput.write(request.toByteArray(StandardCharsets.ISO_8859_1))
         activeOutput.flush()
@@ -198,6 +237,7 @@ class RtspAudioSession(
     }
 
     private companion object {
+        const val TAG = "RtspAudioSession"
         const val DEFAULT_RTSP_PORT = 554
         const val CONNECT_TIMEOUT_MS = 5_000
         const val READ_TIMEOUT_MS = 5_000

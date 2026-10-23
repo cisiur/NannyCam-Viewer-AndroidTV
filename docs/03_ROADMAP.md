@@ -83,7 +83,8 @@ Goal: play the camera's real PCM16 LE audio despite the incorrect PCMA SDP decla
 - [~] recover toward live by dropping stale audio when needed
 - [~] keep audio lifecycle independent from video
 - [~] add remote-accessible mute/unmute and raw/processed comparison control
-- [ ] physically validate speech clarity
+- [~] add RTSP audio-session keepalive with independent recovery
+- [x] physically validate basic understandable, effectively live PCM16LE speech
 - [ ] physically validate long-running audio latency
 - [ ] physically validate audio recovery after connection loss
 
@@ -93,9 +94,9 @@ If Media3 gives good video but cannot expose this malformed raw audio payload co
 
 Exit: clear live camera audio matching the previously validated PCM16 interpretation.
 
-ATV-02 has a separate, camera-specific RTSP/TCP audio implementation awaiting physical
-validation. It intentionally bypasses the SDP's PCMA declaration and sends the selected
-audio RTP payload to PCM16LE interpretation instead. Raw PCM intelligibility, processed
+ATV-02 has a separate, camera-specific RTSP/TCP audio implementation. Basic Android audio
+is physically confirmed as understandable and effectively live with the PCM16LE path; it
+intentionally bypasses the SDP's PCMA declaration. The RTSP keepalive corrective, processed
 audio quality, mute freshness, A/V relationship, long-run latency, and failure recovery
 remain incomplete until tested on the primary Fire TV and camera.
 
