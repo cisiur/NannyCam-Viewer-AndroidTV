@@ -10,6 +10,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.rtsp.RtspMediaSource
@@ -42,9 +43,10 @@ class VideoPlaybackController(
     private var player: ExoPlayer? = null
     private var cameraUri: String? = null
     private var connectIntent = false
-    private var connectStartedAtMs = 0L
+    private var attemptStartedAtMs = 0L
     private var firstFrameReported = false
     private var playerAttemptId = 0L
+    private var bufferingMode = VideoBufferingMode.LOW_LATENCY
 
     private val reconnectRunnable = Runnable {
         reconnectPolicy.retryStarted()
@@ -63,6 +65,15 @@ class VideoPlaybackController(
 
     val state: ConnectionState
         get() = stateMachine.state
+
+    val currentBufferingMode: VideoBufferingMode
+        get() = bufferingMode
+
+    /** Applies only when a subsequent player is created. */
+    fun toggleBufferingMode(): VideoBufferingMode {
+        bufferingMode = bufferingMode.toggled()
+        return bufferingMode
+    }
 
     fun connect(uri: String) {
         if (!stateMachine.beginConnect()) return
@@ -102,21 +113,37 @@ class VideoPlaybackController(
         } else {
             Log.i(TAG, "Creating player")
         }
-        connectStartedAtMs = SystemClock.elapsedRealtime()
+        attemptStartedAtMs = SystemClock.elapsedRealtime()
         firstFrameReported = false
         playerAttemptId++
         val attemptId = playerAttemptId
+        val attemptBufferingMode = bufferingMode
+        Log.i(TAG, "Video attempt #$attemptId started")
+        Log.i(TAG, "Video buffering mode: $attemptBufferingMode")
 
         val trackSelector = DefaultTrackSelector(appContext).apply {
             parameters = buildUponParameters()
                 .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true)
                 .build()
         }
-        val newPlayer = ExoPlayer.Builder(appContext)
+        val playerBuilder = ExoPlayer.Builder(appContext)
             .setTrackSelector(trackSelector)
-            .build()
+        VideoBufferingPolicy.durationsFor(attemptBufferingMode)?.let { durations ->
+            playerBuilder.setLoadControl(
+                DefaultLoadControl.Builder()
+                    .setBufferDurationsMs(
+                        durations.minBufferMs,
+                        durations.maxBufferMs,
+                        durations.bufferForPlaybackMs,
+                        durations.bufferForPlaybackAfterRebufferMs
+                    )
+                    .build()
+            )
+        }
+        val newPlayer = playerBuilder.build()
+        Log.i(TAG, "Player created after ${elapsedSinceAttemptMs(attemptId)}ms")
         newPlayer.addListener(createPlayerListener(attemptId))
-        newPlayer.addAnalyticsListener(analyticsListener)
+        newPlayer.addAnalyticsListener(createAnalyticsListener(attemptId))
         player = newPlayer
         playerView.player = newPlayer
 
@@ -127,8 +154,9 @@ class VideoPlaybackController(
         Log.i(TAG, "RTSP preparation started with RTP-over-RTSP/TCP")
         newPlayer.setMediaSource(mediaSource)
         firstFrameTimeout.arm(attemptId)
-        handler.postDelayed(firstFrameTimeoutRunnable, FIRST_FRAME_TIMEOUT_MS)
-        Log.i(TAG, "First-frame timeout armed: ${FIRST_FRAME_TIMEOUT_MS}ms")
+        handler.postDelayed(firstFrameTimeoutRunnable, VideoStartupPolicy.FIRST_FRAME_TIMEOUT_MS)
+        Log.i(TAG, "First-frame timeout armed: ${VideoStartupPolicy.FIRST_FRAME_TIMEOUT_MS}ms")
+        Log.i(TAG, "prepare() called after ${elapsedSinceAttemptMs(attemptId)}ms")
         newPlayer.prepare()
         newPlayer.playWhenReady = true
     }
@@ -138,6 +166,7 @@ class VideoPlaybackController(
             if (attemptId != playerAttemptId) return
             Log.i(TAG, "Playback state changed: $playbackState")
             if (playbackState == Player.STATE_READY && player?.playWhenReady == true) {
+                Log.i(TAG, "Playback STATE_READY after ${elapsedSinceAttemptMs(attemptId)}ms")
                 stateMachine.playbackStarted()
                 reconnectPolicy.reset()
                 notifyState()
@@ -152,8 +181,8 @@ class VideoPlaybackController(
                     handler.removeCallbacks(firstFrameTimeoutRunnable)
                     Log.i(TAG, "First video frame rendered; startup timeout cancelled")
                 }
-                val startupLatencyMs = SystemClock.elapsedRealtime() - connectStartedAtMs
-                Log.i(TAG, "First video frame rendered; startup latency ${startupLatencyMs}ms")
+                val startupLatencyMs = elapsedSinceAttemptMs(attemptId)
+                Log.i(TAG, "First video frame rendered after ${startupLatencyMs}ms")
                 listener.onFirstFrameRendered(startupLatencyMs)
             }
         }
@@ -165,18 +194,24 @@ class VideoPlaybackController(
         }
     }
 
-    private val analyticsListener = object : AnalyticsListener {
+    private fun createAnalyticsListener(attemptId: Long) = object : AnalyticsListener {
         override fun onVideoDecoderInitialized(
             eventTime: AnalyticsListener.EventTime,
             decoderName: String,
             initializedTimestampMs: Long,
             initializationDurationMs: Long
         ) {
-            Log.i(TAG, "Selected video decoder: $decoderName")
+            if (attemptId != playerAttemptId) return
+            Log.i(
+                TAG,
+                "Selected video decoder: $decoderName after ${elapsedSinceAttemptMs(attemptId)}ms"
+            )
             listener.onSelectedVideoDecoder(decoderName)
         }
-
     }
+
+    private fun elapsedSinceAttemptMs(attemptId: Long): Long =
+        if (attemptId == playerAttemptId) SystemClock.elapsedRealtime() - attemptStartedAtMs else 0L
 
     private fun handlePlaybackFailure(message: String, attemptId: Long = playerAttemptId) {
         if (!connectIntent || attemptId != playerAttemptId) return
@@ -212,7 +247,6 @@ class VideoPlaybackController(
 
     private companion object {
         const val TAG = "VideoPlayback"
-        const val FIRST_FRAME_TIMEOUT_MS = 10_000L
         // This remains an RTSP transport/source timeout, not an application-level frame watchdog.
         const val RTSP_TIMEOUT_MS = 5_000L
     }

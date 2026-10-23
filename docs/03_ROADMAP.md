@@ -51,6 +51,8 @@ Plan:
 - [x] verify the selected hardware H.264 decoder and expose selected-decoder diagnostics
 - [x] record physical Connect-to-first-frame startup timing
 - [x] physically verify first-frame startup-hang recovery
+- [~] reduce stalled-start recovery timeout based on physical startup measurements
+- [~] evaluate low-latency Media3 buffering with a physical A/B mode
 - [ ] measure latency after extended playback
 - [ ] confirm no progressive lag
 - [~] implement explicit Disconnect/resource release

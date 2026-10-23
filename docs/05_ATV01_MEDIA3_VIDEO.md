@@ -49,12 +49,12 @@ transport/source timeout; it is not an application-level video-frame liveness de
 
 Physical testing also exposed a separate startup hang: Media3 initialized the expected
 decoder but remained in `BUFFERING`, with neither a rendered first frame nor
-`onPlayerError`. `VideoPlaybackController` now arms a one-time 10-second first-frame
+`onPlayerError`. `VideoPlaybackController` now arms a one-time first-frame
 startup timeout for each player attempt. A rendered first frame cancels it immediately;
 expiry releases that attempt and enters the existing reconnect sequence. This is not a
 continuous playback/frame-progress watchdog: after the first frame, the application keeps
 no video liveness timer active. Physical validation confirmed this corrective: an occasional
-first attempt stalled before first frame, the 10-second timeout released it, the existing
+first attempt stalled before first frame, the timeout released it, the existing
 one-second reconnect ran, and the replacement attempt rendered its first frame in
 approximately 1.47 seconds.
 
@@ -70,6 +70,29 @@ first frame in approximately 1.47 seconds. The latest observed video delay was
 approximately 1–2 seconds behind live. No continuous frame-progress watchdog is active.
 Long-run latency and progressive-lag testing over 15–30 minutes remain pending; no long-run
 stability conclusion can be made from automated tests or short runs.
+
+## Startup and latency experiment
+
+The physically observed successful first-frame range is approximately 1.47–4.7 seconds,
+while the known stalled attempt produced no frame. The attempt-scoped first-frame timeout is
+therefore reduced from 10 seconds to 6 seconds: it remains above the slowest successful
+observation while reducing recovery time for a clearly stalled attempt. It is still cancelled
+by the first rendered frame, explicit disconnect, lifecycle release, or replacement player;
+there is no continuous post-first-frame watchdog.
+
+Each player attempt records monotonic `SystemClock.elapsedRealtime()` timing for attempt
+start, player creation, `prepare()`, decoder initialization, first rendered frame, and
+`STATE_READY`. The resulting log deltas are intended for repeated physical measurements,
+not continuous telemetry.
+
+This build defaults its developer-only `Video Buffer` toggle to **Low Latency**. That mode
+uses Media3 `DefaultLoadControl` with a 500 ms minimum buffer, 1500 ms maximum buffer,
+100 ms playback threshold, and 250 ms rebuffer threshold. **Default** creates the player
+without a custom `LoadControl`, preserving Media3's normal behavior. Changing the toggle
+does not alter a current player; Disconnect/Connect provides a clean A/B attempt. The RTSP
+transport/source timeout remains 5 seconds and is not a startup-buffer control. Media3,
+RTSP-over-TCP, decoder selection, and the video architecture are unchanged. Physical A/B
+testing is required before claiming a startup or live-latency improvement.
 
 ## Display idle behavior
 

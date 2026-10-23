@@ -20,6 +20,7 @@ import com.cisiur.nannycamviewer.audio.AudioPlaybackController
 import com.cisiur.nannycamviewer.platform.PlatformDiagnostics
 import com.cisiur.nannycamviewer.platform.PlatformDiagnosticsFormatter
 import com.cisiur.nannycamviewer.playback.ConnectionState
+import com.cisiur.nannycamviewer.playback.VideoBufferingMode
 import com.cisiur.nannycamviewer.playback.VideoPlaybackController
 import com.cisiur.nannycamviewer.playback.ViewerKeepScreenOnPolicy
 
@@ -38,6 +39,7 @@ class MainActivity : Activity() {
     private lateinit var audioDiagnosticsText: TextView
     private lateinit var muteButton: Button
     private lateinit var processingButton: Button
+    private lateinit var videoBufferingButton: Button
     private lateinit var audioPlaybackController: AudioPlaybackController
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -57,6 +59,7 @@ class MainActivity : Activity() {
         audioDiagnosticsText = findViewById(R.id.audio_diagnostics_text)
         muteButton = findViewById(R.id.mute_button)
         processingButton = findViewById(R.id.processing_button)
+        videoBufferingButton = findViewById(R.id.video_buffering_button)
 
         endpointStore.load()?.let(endpointInput::setText)
         playbackController = VideoPlaybackController(
@@ -108,6 +111,10 @@ class MainActivity : Activity() {
             audioPlaybackController.toggleProcessing()
             updateAudioState(audioPlaybackController.connectionState)
         }
+        videoBufferingButton.setOnClickListener {
+            updateVideoBufferingMode(playbackController.toggleBufferingMode())
+            configurationMessage.text = getString(R.string.video_buffering_applies_on_next_connection)
+        }
         endpointInput.setOnEditorActionListener { _, actionId, event ->
             if (actionId == EditorInfo.IME_ACTION_DONE ||
                 (event?.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_UP)
@@ -122,6 +129,7 @@ class MainActivity : Activity() {
             PlatformDiagnosticsFormatter.format(PlatformDiagnostics.collect(this))
         updatePlaybackState(ConnectionState.NOT_CONNECTED)
         updateAudioState(AudioConnectionState.STOPPED)
+        updateVideoBufferingMode(playbackController.currentBufferingMode)
     }
 
     override fun onStop() {
@@ -208,6 +216,10 @@ class MainActivity : Activity() {
         processingButton.text = getString(
             if (audioPlaybackController.isProcessingEnabled()) R.string.processed_pcm else R.string.raw_pcm
         )
+    }
+
+    private fun updateVideoBufferingMode(mode: VideoBufferingMode) {
+        videoBufferingButton.text = getString(R.string.video_buffering_mode, mode.label)
     }
 
     private fun formatAudioDiagnostics(diagnostics: AudioDiagnostics): String = getString(

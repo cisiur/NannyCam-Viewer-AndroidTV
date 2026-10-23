@@ -19,6 +19,9 @@
     <string name="selected_decoder_unknown">Selected video decoder: not selected</string>
     <string name="selected_decoder">Selected video decoder: %1$s</string>
     <string name="first_frame_rendered">First video frame rendered in approximately %1$d ms.</string>
+    <string name="video_buffering_mode">Video Buffer: %1$s</string>
+    <string name="video_buffering_low_latency">Video Buffer: Low Latency</string>
+    <string name="video_buffering_applies_on_next_connection">Video buffering mode will apply to the next player connection.</string>
     <string name="runtime_diagnostics">Runtime diagnostics</string>
     <string name="audio">Audio</string>
     <string name="audio_stopped">Audio: stopped</string>

@@ -7,6 +7,11 @@ import org.junit.Test
 
 class FirstFrameStartupTimeoutTest {
     @Test
+    fun `startup timeout is six seconds`() {
+        assertEquals(6_000L, VideoStartupPolicy.FIRST_FRAME_TIMEOUT_MS)
+    }
+
+    @Test
     fun `timeout is armed for a new attempt and cancelled by first frame`() {
         val timeout = FirstFrameStartupTimeout()
 
@@ -51,5 +56,15 @@ class FirstFrameStartupTimeoutTest {
         assertTrue(timeout.isArmedFor(2))
         timeout.cancel()
         assertFalse(timeout.expire(2))
+    }
+
+    @Test
+    fun `first frame leaves no active timeout for a continuous watchdog`() {
+        val timeout = FirstFrameStartupTimeout()
+
+        timeout.arm(1)
+        assertTrue(timeout.firstFrameRendered(1))
+        assertFalse(timeout.isArmedFor(1))
+        assertFalse(timeout.expire(1))
     }
 }
