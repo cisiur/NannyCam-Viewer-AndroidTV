@@ -2,6 +2,7 @@ package com.cisiur.nannycamviewer.ui
 
 import android.app.Activity
 import android.os.Bundle
+import android.util.Log
 import android.view.KeyEvent
 import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
@@ -41,6 +42,7 @@ class MainActivity : Activity() {
     private lateinit var processingButton: Button
     private lateinit var videoBufferingButton: Button
     private lateinit var audioPlaybackController: AudioPlaybackController
+    private val audioStartupGate = ViewerAudioStartupGate()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -70,10 +72,25 @@ class MainActivity : Activity() {
 
                 override fun onSelectedVideoDecoder(decoderName: String) {
                     decoderText.text = getString(R.string.selected_decoder, decoderName)
+                    when (val decision = audioStartupGate.onVideoDecoderInitialized()) {
+                        is ViewerAudioStartupGate.Decision.StartAudio -> {
+                            Log.i(TAG, "Video decoder initialized; starting initial audio session")
+                            audioPlaybackController.connect(decision.uri)
+                        }
+                        ViewerAudioStartupGate.Decision.AlreadyStarted -> {
+                            Log.i(TAG, "Initial audio already started for viewer session; ignoring duplicate decoder callback")
+                        }
+                        ViewerAudioStartupGate.Decision.NoActiveSession -> {
+                            Log.i(TAG, "Ignoring decoder callback without an active viewer session")
+                        }
+                    }
                 }
 
                 override fun onPlaybackError(message: String) {
                     statusText.text = getString(R.string.error_status, message)
+                    if (audioStartupGate.remainsGatedAfterVideoFailure()) {
+                        Log.i(TAG, "Video attempt failed before audio start; audio remains gated")
+                    }
                 }
 
                 override fun onFirstFrameRendered(startupLatencyMs: Long) {
@@ -99,6 +116,7 @@ class MainActivity : Activity() {
         saveButton.setOnClickListener { saveEndpoint() }
         connectButton.setOnClickListener { connectSavedEndpoint() }
         disconnectButton.setOnClickListener {
+            resetAudioStartupGate("Viewer session disconnected; audio-start gate reset")
             playbackController.disconnect()
             audioPlaybackController.disconnect()
             setViewerKeepScreenOn(false)
@@ -133,6 +151,7 @@ class MainActivity : Activity() {
     }
 
     override fun onStop() {
+        resetAudioStartupGate("Viewer session lifecycle release; audio-start gate reset")
         setViewerKeepScreenOn(false)
         playbackController.releaseForLifecycle()
         audioPlaybackController.releaseForLifecycle()
@@ -160,8 +179,9 @@ class MainActivity : Activity() {
         val configuredEndpoint = endpointStore.load()
         val result = configuredEndpoint?.let(CameraEndpointNormalizer::normalize)
         if (result is CameraEndpointNormalizer.Result.Valid) {
+            audioStartupGate.beginSession(result.uri)
+            Log.i(TAG, "Viewer session connect: video starts first; audio start gated")
             playbackController.connect(result.uri)
-            audioPlaybackController.connect(result.uri)
         } else {
             statusText.text = getString(R.string.error_status, getString(R.string.save_endpoint_first))
             connectButton.isEnabled = false
@@ -197,6 +217,11 @@ class MainActivity : Activity() {
         } else {
             window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
+    }
+
+    private fun resetAudioStartupGate(message: String) {
+        audioStartupGate.reset()
+        Log.i(TAG, message)
     }
 
     private fun updateAudioState(state: AudioConnectionState) {
@@ -241,4 +266,8 @@ class MainActivity : Activity() {
 
     private fun hasValidSavedEndpoint(): Boolean =
         endpointStore.load()?.let(CameraEndpointNormalizer::normalize) is CameraEndpointNormalizer.Result.Valid
+
+    private companion object {
+        const val TAG = "ViewerStartup"
+    }
 }

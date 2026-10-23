@@ -92,7 +92,25 @@ without a custom `LoadControl`, preserving Media3's normal behavior. Changing th
 does not alter a current player; Disconnect/Connect provides a clean A/B attempt. The RTSP
 transport/source timeout remains 5 seconds and is not a startup-buffer control. Media3,
 RTSP-over-TCP, decoder selection, and the video architecture are unchanged. Physical A/B
-testing is required before claiming a startup or live-latency improvement.
+testing found **Low Latency** materially reduced perceived live video lag and is the current
+preferred mode. It did not, however, explain the long cold-start path described below.
+
+## Cold-start sequencing experiment
+
+Subsequent Disconnect/Connect attempts were generally fast in the latest physical A/B test,
+but the first connection after app launch remained slower. That cold start logged repeated
+Media3 `IllegalArgumentException: missing attribute fmtp` SDP failures: three video attempts
+failed before a fourth succeeded. The retries, rather than `LoadControl`, were the main cause
+of the long first startup.
+
+This experiment retains two independent RTSP/TCP sessions. On a fresh viewer connection,
+the Activity starts Media3 video first and gates the one initial custom-audio connection on
+Media3's `onVideoDecoderInitialized` callback. That milestone means Media3 has parsed enough
+RTSP/SDP to initialize the H.264 decoder; it does not wait for the first rendered frame. If
+video fails before decoder initialization, audio remains stopped while normal video retries
+continue. Once audio has been started for the viewer session, its lifecycle and recovery stay
+independent through later video reconnects. Physical validation is required before treating
+staggered negotiation as a fix for the cold-start SDP failures.
 
 ## Display idle behavior
 
