@@ -26,6 +26,8 @@ import com.cisiur.nannycamviewer.playback.ConnectionState
 import com.cisiur.nannycamviewer.playback.VideoBufferingMode
 import com.cisiur.nannycamviewer.playback.VideoPlaybackController
 import com.cisiur.nannycamviewer.playback.ViewerKeepScreenOnPolicy
+import com.cisiur.nannycamviewer.probe.H264ProbeSummary
+import com.cisiur.nannycamviewer.probe.H264RtspProbe
 
 @UnstableApi
 class MainActivity : Activity() {
@@ -43,7 +45,9 @@ class MainActivity : Activity() {
     private lateinit var muteButton: Button
     private lateinit var processingButton: Button
     private lateinit var videoBufferingButton: Button
+    private lateinit var h264ProbeButton: Button
     private lateinit var audioPlaybackController: AudioPlaybackController
+    private var h264Probe: H264RtspProbe? = null
     private val audioStartupGate = ViewerAudioStartupGate()
     private val startupHandler = Handler(Looper.getMainLooper())
     private var pendingInitialAudioStart: Runnable? = null
@@ -66,6 +70,7 @@ class MainActivity : Activity() {
         muteButton = findViewById(R.id.mute_button)
         processingButton = findViewById(R.id.processing_button)
         videoBufferingButton = findViewById(R.id.video_buffering_button)
+        h264ProbeButton = findViewById(R.id.h264_probe_button)
 
         endpointStore.load()?.let(endpointInput::setText)
         playbackController = VideoPlaybackController(
@@ -158,6 +163,7 @@ class MainActivity : Activity() {
             updateVideoBufferingMode(playbackController.toggleBufferingMode())
             configurationMessage.text = getString(R.string.video_buffering_applies_on_next_connection)
         }
+        h264ProbeButton.setOnClickListener { runH264Probe() }
         endpointInput.setOnEditorActionListener { _, actionId, event ->
             if (actionId == EditorInfo.IME_ACTION_DONE ||
                 (event?.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_UP)
@@ -176,6 +182,8 @@ class MainActivity : Activity() {
     }
 
     override fun onStop() {
+        h264Probe?.close()
+        h264Probe = null
         resetAudioStartupGate("Viewer session lifecycle release; audio-start gate reset")
         setViewerKeepScreenOn(false)
         playbackController.releaseForLifecycle()
@@ -201,6 +209,10 @@ class MainActivity : Activity() {
     }
 
     private fun connectSavedEndpoint() {
+        if (h264Probe != null) {
+            configurationMessage.text = getString(R.string.h264_probe_running)
+            return
+        }
         val configuredEndpoint = endpointStore.load()
         val result = configuredEndpoint?.let(CameraEndpointNormalizer::normalize)
         if (result is CameraEndpointNormalizer.Result.Valid) {
@@ -213,6 +225,56 @@ class MainActivity : Activity() {
             connectButton.isEnabled = false
             disconnectButton.isEnabled = false
         }
+    }
+
+    private fun runH264Probe() {
+        if (h264Probe != null) {
+            configurationMessage.text = getString(R.string.h264_probe_running)
+            return
+        }
+        if (playbackController.state != ConnectionState.NOT_CONNECTED ||
+            audioPlaybackController.connectionState != AudioConnectionState.STOPPED
+        ) {
+            configurationMessage.text = getString(R.string.disconnect_before_h264_probe)
+            return
+        }
+        val configuredEndpoint = endpointStore.load()
+        val result = configuredEndpoint?.let(CameraEndpointNormalizer::normalize)
+        if (result !is CameraEndpointNormalizer.Result.Valid) {
+            configurationMessage.text = getString(R.string.save_endpoint_first)
+            return
+        }
+
+        lateinit var probe: H264RtspProbe
+        probe = H264RtspProbe(
+            endpointUri = result.uri,
+            listener = object : H264RtspProbe.Listener {
+                override fun onComplete(summary: H264ProbeSummary) {
+                    runOnUiThread {
+                        if (h264Probe === probe) {
+                            h264Probe = null
+                            configurationMessage.text = getString(
+                                R.string.h264_probe_complete,
+                                summary.rtpPackets
+                            )
+                        }
+                    }
+                }
+
+                override fun onFailure(message: String) {
+                    runOnUiThread {
+                        if (h264Probe === probe) {
+                            h264Probe = null
+                            configurationMessage.text = getString(R.string.h264_probe_failed, message)
+                        }
+                    }
+                }
+            }
+        )
+        h264Probe = probe
+        configurationMessage.text = getString(R.string.h264_probe_running)
+        Log.i(TAG, "Starting bounded H.264 video RTSP probe")
+        probe.start()
     }
 
     private fun hideKeyboardAndCompleteInput() {
