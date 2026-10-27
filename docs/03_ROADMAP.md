@@ -125,22 +125,31 @@ the primary Fire TV and camera.
 
 Goal: make the application usable as a simple TV monitor without keyboard or mouse.
 
-- [ ] full-screen live camera view
-- [ ] D-pad focus/navigation
-- [ ] minimal remote-friendly controls
-- [ ] connecting state
-- [ ] reconnecting state
-- [ ] disconnected/error state
-- [ ] automatic reconnect with cancellable bounded attempts
-- [ ] explicit Disconnect stops reconnect intent
-- [ ] mute/unmute available from remote
-- [ ] handle Activity pause/resume/stop appropriately
+- [~] large aspect-preserving live camera view with a compact control bar
+- [~] D-pad focus/navigation
+- [~] minimal remote-friendly controls
+- [~] connecting / waiting-for-video state (implemented in ATV-VID-01)
+- [~] reconnecting state (implemented in ATV-VID-01)
+- [~] disconnected/error state (implemented in ATV-VID-01)
+- [~] automatic reconnect with cancellable bounded attempts (implemented in ATV-VID-01)
+- [~] explicit Disconnect stops reconnect intent (implemented in ATV-VID-01)
+- [~] mute/unmute available from remote
+- [~] handle Activity stop/resource release and explicit reconnect on return (implemented in ATV-VID-01)
+- [~] ATV-03-UI-01 functional main viewer and settings/diagnostics separation in one Activity
 - [ ] test TV sleep/wake
 - [ ] test app switch and return
 - [ ] test network/camera power loss and recovery
 - [ ] test close/relaunch
 
 Exit: normal full-screen viewer is reliable on the physical TV device.
+
+ATV-03-UI-01 moves endpoint configuration, Raw/Processed comparison, selected decoder,
+audio/platform diagnostics, and the H.264 probe behind Settings. Normal viewing shows a
+large 16:9 SurfaceView, compact state, Connect/Disconnect, Mute/Unmute, and Settings.
+The settings panel leaves playback and its Surface attached in the same Activity.
+Existing media-state/reconnect/lifecycle items above are implemented and unit-tested;
+their updated statuses do not claim new physical verification. Fire TV UI/D-pad physical
+validation remains pending. See `docs/10_TV_UI.md`.
 
 ## ATV-04 — System Picture-in-Picture
 

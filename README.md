@@ -46,6 +46,7 @@ See [docs/02_CAMERA_REVERSE_ENGINEERING.md](docs/02_CAMERA_REVERSE_ENGINEERING.m
 - [Roadmap](docs/03_ROADMAP.md)
 - [Platform constraints: PiP and audio focus](docs/04_PLATFORM_PIP_AUDIO.md)
 - [Production custom video architecture](docs/09_CUSTOM_VIDEO_PRODUCTION.md)
+- [TV viewer and settings navigation](docs/10_TV_UI.md)
 
 ## Intended implementation direction
 

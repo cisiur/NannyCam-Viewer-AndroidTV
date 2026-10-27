@@ -1,6 +1,7 @@
 package com.cisiur.nannycamviewer.ui
 
 import android.app.Activity
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -8,6 +9,7 @@ import android.util.Log
 import android.view.KeyEvent
 import android.view.SurfaceView
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
@@ -32,6 +34,15 @@ import com.cisiur.nannycamviewer.probe.H264RtspProbe
 class MainActivity : Activity() {
     private lateinit var endpointInput: EditText
     private lateinit var configurationMessage: TextView
+    private lateinit var probeMessage: TextView
+    private lateinit var videoDiagnosticsText: TextView
+    private lateinit var audioErrorText: TextView
+    private lateinit var viewerContainer: ViewGroup
+    private lateinit var viewerControls: View
+    private lateinit var settingsContainer: View
+    private lateinit var settingsButton: Button
+    private var showingSettings = false
+    private var unregisterSettingsBack: (() -> Unit)? = null
     private lateinit var endpointStore: CameraEndpointStore
     private lateinit var saveButton: Button
     private lateinit var connectButton: Button
@@ -60,6 +71,13 @@ class MainActivity : Activity() {
         endpointStore = CameraEndpointStore(this)
         endpointInput = findViewById(R.id.endpoint_input)
         configurationMessage = findViewById(R.id.configuration_message)
+        probeMessage = findViewById(R.id.probe_message)
+        videoDiagnosticsText = findViewById(R.id.video_diagnostics_text)
+        audioErrorText = findViewById(R.id.audio_error_text)
+        viewerContainer = findViewById(R.id.viewer_container)
+        viewerControls = findViewById(R.id.viewer_controls)
+        settingsContainer = findViewById(R.id.settings_container)
+        settingsButton = findViewById(R.id.settings_button)
         saveButton = findViewById(R.id.save_button)
         connectButton = findViewById(R.id.connect_button)
         disconnectButton = findViewById(R.id.disconnect_button)
@@ -83,7 +101,7 @@ class MainActivity : Activity() {
                 }
 
                 override fun onPlaybackError(message: String, attemptId: Long) {
-                    configurationMessage.text = getString(R.string.video_issue, message)
+                    videoDiagnosticsText.text = getString(R.string.video_issue, message)
                     when (audioStartupGate.onVideoFailure(attemptId)) {
                         ViewerAudioStartupGate.VideoFailureDecision.CancelPendingAudioStart -> {
                             cancelPendingInitialAudioStart()
@@ -98,7 +116,7 @@ class MainActivity : Activity() {
                 }
 
                 override fun onFirstVideoOutput(startupLatencyMs: Long, attemptId: Long) {
-                    configurationMessage.text = getString(R.string.first_video_output, startupLatencyMs)
+                    videoDiagnosticsText.text = getString(R.string.first_video_output, startupLatencyMs)
                     when (val decision = audioStartupGate.onVideoFirstFrame(attemptId)) {
                         is ViewerAudioStartupGate.FirstFrameDecision.ScheduleAudio -> {
                             scheduleInitialAudioStart(decision.token)
@@ -125,7 +143,7 @@ class MainActivity : Activity() {
                 override fun onAudioStateChanged(state: AudioConnectionState) = updateAudioState(state)
 
                 override fun onAudioError(message: String) {
-                    configurationMessage.text = getString(R.string.audio_error, message)
+                    audioErrorText.text = getString(R.string.audio_error, message)
                 }
 
                 override fun onAudioDiagnostics(diagnostics: AudioDiagnostics) {
@@ -136,12 +154,9 @@ class MainActivity : Activity() {
 
         saveButton.setOnClickListener { saveEndpoint() }
         connectButton.setOnClickListener { connectSavedEndpoint() }
-        disconnectButton.setOnClickListener {
-            resetAudioStartupGate("Viewer session disconnected; audio-start gate reset")
-            playbackController.disconnect()
-            audioPlaybackController.disconnect()
-            setViewerKeepScreenOn(false)
-        }
+        disconnectButton.setOnClickListener { disconnectViewer() }
+        settingsButton.setOnClickListener { showSettings(true) }
+        findViewById<Button>(R.id.settings_back_button).setOnClickListener { showSettings(false) }
         muteButton.setOnClickListener {
             audioPlaybackController.toggleMute()
             updateAudioState(audioPlaybackController.connectionState)
@@ -165,11 +180,53 @@ class MainActivity : Activity() {
             PlatformDiagnosticsFormatter.format(PlatformDiagnostics.collect(this))
         updatePlaybackState(ConnectionState.NOT_CONNECTED)
         updateAudioState(AudioConnectionState.STOPPED)
+        preferredViewerControl().requestFocus()
+    }
+
+    @Suppress("DEPRECATION")
+    @Deprecated("Uses the Activity Back contract, including the Fire TV remote")
+    override fun onBackPressed() {
+        if (showingSettings) showSettings(false) else super.onBackPressed()
+    }
+
+    private fun showSettings(show: Boolean) {
+        showingSettings = show
+        unregisterSettingsBack?.invoke()
+        unregisterSettingsBack = null
+        if (show && Build.VERSION.SDK_INT >= 33) {
+            val callback = android.window.OnBackInvokedCallback { showSettings(false) }
+            onBackInvokedDispatcher.registerOnBackInvokedCallback(
+                android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, callback
+            )
+            unregisterSettingsBack = { onBackInvokedDispatcher.unregisterOnBackInvokedCallback(callback) }
+        }
+        // Never hide/reparent the viewer container or SurfaceView here: that would destroy
+        // the Surface and restart the active video attempt. An opaque sibling covers it.
+        viewerContainer.descendantFocusability = if (show) ViewGroup.FOCUS_BLOCK_DESCENDANTS
+            else ViewGroup.FOCUS_AFTER_DESCENDANTS
+        viewerControls.visibility = if (show) View.INVISIBLE else View.VISIBLE
+        settingsContainer.visibility = if (show) View.VISIBLE else View.GONE
+        if (show) {
+            saveButton.requestFocus() // Do not open the IME merely by opening diagnostics.
+        } else {
+            hideKeyboard()
+            endpointInput.clearFocus()
+            preferredViewerControl().requestFocus()
+        }
+    }
+
+    private fun disconnectViewer() {
+        resetAudioStartupGate("Viewer session disconnected; audio-start gate reset")
+        playbackController.disconnect()
+        audioPlaybackController.disconnect()
+        setViewerKeepScreenOn(false)
+        refreshControls()
     }
 
     override fun onStop() {
         h264Probe?.close()
         h264Probe = null
+        refreshControls()
         resetAudioStartupGate("Viewer session lifecycle release; audio-start gate reset")
         setViewerKeepScreenOn(false)
         playbackController.releaseForLifecycle()
@@ -178,6 +235,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        unregisterSettingsBack?.invoke()
         playbackController.destroy()
         super.onDestroy()
     }
@@ -202,7 +260,7 @@ class MainActivity : Activity() {
     private fun connectSavedEndpoint() {
         if (playbackController.isBusy) return
         if (h264Probe != null) {
-            configurationMessage.text = getString(R.string.h264_probe_running)
+            statusText.text = getString(R.string.probe_in_progress)
             return
         }
         val configuredEndpoint = viewerEndpointUri ?: endpointStore.load()
@@ -213,30 +271,28 @@ class MainActivity : Activity() {
                 audioStartupGate.beginSession(result.uri)
             }
             videoSurface.visibility = View.VISIBLE
+            videoDiagnosticsText.text = ""
+            audioErrorText.text = ""
             Log.i(TAG, "Viewer session connect: hardware video first; initial audio gated until video output")
             playbackController.connect(result.uri)
         } else {
-            statusText.text = getString(R.string.error_status, getString(R.string.save_endpoint_first))
-            connectButton.isEnabled = false
-            disconnectButton.isEnabled = false
+            refreshControls()
         }
     }
 
     private fun runH264Probe() {
         if (h264Probe != null) {
-            configurationMessage.text = getString(R.string.h264_probe_running)
-            return
-        }
-        if (viewerEndpointUri != null || playbackController.isBusy ||
-            audioPlaybackController.connectionState != AudioConnectionState.STOPPED
-        ) {
-            configurationMessage.text = getString(R.string.disconnect_before_h264_probe)
+            probeMessage.text = getString(R.string.h264_probe_running)
             return
         }
         val configuredEndpoint = endpointStore.load()
         val result = configuredEndpoint?.let(CameraEndpointNormalizer::normalize)
         if (result !is CameraEndpointNormalizer.Result.Valid) {
-            configurationMessage.text = getString(R.string.save_endpoint_first)
+            probeMessage.text = getString(R.string.save_endpoint_first)
+            return
+        }
+        if (!controlAvailability().canProbe) {
+            probeMessage.text = getString(R.string.disconnect_before_h264_probe)
             return
         }
 
@@ -248,11 +304,12 @@ class MainActivity : Activity() {
                     runOnUiThread {
                         if (h264Probe === probe) {
                             h264Probe = null
-                            configurationMessage.text = if (result.outcome == H264ProbeOutcome.H264_RTP_DETECTED) {
+                            probeMessage.text = if (result.outcome == H264ProbeOutcome.H264_RTP_DETECTED) {
                                 getString(R.string.h264_probe_complete, result.h264.rtpPackets)
                             } else {
                                 getString(R.string.h264_probe_no_matching_rtp)
                             }
+                            refreshControls()
                         }
                     }
                 }
@@ -261,38 +318,92 @@ class MainActivity : Activity() {
                     runOnUiThread {
                         if (h264Probe === probe) {
                             h264Probe = null
-                            configurationMessage.text = getString(R.string.h264_probe_failed, message)
+                            probeMessage.text = getString(R.string.h264_probe_failed, message)
+                            refreshControls()
                         }
                     }
                 }
             }
         )
         h264Probe = probe
-        configurationMessage.text = getString(R.string.h264_probe_running)
+        probeMessage.text = getString(R.string.h264_probe_running)
+        refreshControls()
         Log.i(TAG, "Starting bounded H.264 video RTSP probe")
         probe.start()
     }
 
     private fun hideKeyboardAndCompleteInput() {
-        val inputMethodManager = getSystemService(InputMethodManager::class.java)
-        inputMethodManager.hideSoftInputFromWindow(endpointInput.windowToken, 0)
+        hideKeyboard()
         endpointInput.clearFocus()
         saveButton.requestFocus()
     }
 
+    private fun hideKeyboard() {
+        val inputMethodManager = getSystemService(InputMethodManager::class.java)
+        inputMethodManager.hideSoftInputFromWindow(endpointInput.windowToken, 0)
+    }
+
     private fun updatePlaybackState(state: ConnectionState) {
         setViewerKeepScreenOn(ViewerKeepScreenOnPolicy.shouldKeepScreenOn(state))
+        refreshControls()
+        if (!playbackController.isBusy) videoSurface.visibility = View.INVISIBLE
+    }
+
+    private fun updateStatus(state: ConnectionState) {
         statusText.text = when (state) {
-            ConnectionState.NOT_CONNECTED -> getString(R.string.not_connected)
+            ConnectionState.NOT_CONNECTED -> getString(when {
+                h264Probe != null -> R.string.probe_in_progress
+                !hasValidSavedEndpoint() -> R.string.configuration_required
+                else -> R.string.not_connected
+            })
             ConnectionState.CONNECTING -> getString(R.string.connecting)
             ConnectionState.WAITING_VIDEO -> getString(R.string.waiting_for_video)
-            ConnectionState.PLAYING -> getString(R.string.playing)
+            ConnectionState.PLAYING -> getString(R.string.live)
             ConnectionState.RECONNECTING -> getString(R.string.reconnecting)
             ConnectionState.ERROR -> getString(R.string.error)
         }
-        connectButton.isEnabled = !playbackController.isBusy && hasValidSavedEndpoint()
-        disconnectButton.isEnabled = viewerEndpointUri != null || playbackController.isBusy
-        if (!playbackController.isBusy) videoSurface.visibility = View.INVISIBLE
+    }
+
+    private fun controlAvailability() = ViewerControls.from(
+        validEndpoint = hasValidSavedEndpoint(),
+        videoBusy = playbackController.isBusy,
+        viewerSession = viewerEndpointUri != null,
+        audioStopped = audioPlaybackController.connectionState == AudioConnectionState.STOPPED,
+        probeRunning = h264Probe != null
+    )
+
+    private fun refreshControls() {
+        val oldFocus = currentFocus
+        val controls = controlAvailability()
+        connectButton.isEnabled = controls.canConnect
+        connectButton.visibility = if (playbackController.isBusy) View.GONE else View.VISIBLE
+        disconnectButton.isEnabled = controls.canDisconnect
+        disconnectButton.visibility = if (controls.canDisconnect) View.VISIBLE else View.GONE
+        muteButton.visibility = if (controls.canDisconnect) View.VISIBLE else View.GONE
+        muteButton.isEnabled = audioPlaybackController.connectionState != AudioConnectionState.STOPPED
+        // Keep the probe reachable so its guard can explain why Disconnect is required.
+        h264ProbeButton.isEnabled = h264Probe == null
+        updateStatus(playbackController.state)
+        val buttons = listOf(connectButton, disconnectButton, muteButton, settingsButton)
+        val focusOrder = buttons.filter { it.visibility == View.VISIBLE && it.isEnabled }
+        focusOrder.forEachIndexed { index, button ->
+            button.nextFocusLeftId = focusOrder.getOrElse(index - 1) { button }.id
+            button.nextFocusRightId = focusOrder.getOrElse(index + 1) { button }.id
+            button.nextFocusUpId = button.id
+            button.nextFocusDownId = button.id
+            button.nextFocusForwardId = focusOrder.getOrElse(index + 1) { button }.id
+        }
+        if (!showingSettings && oldFocus in buttons && oldFocus !in focusOrder) {
+            preferredViewerControl().requestFocus()
+        } else if (showingSettings && oldFocus === h264ProbeButton && !h264ProbeButton.isEnabled) {
+            processingButton.requestFocus()
+        }
+    }
+
+    private fun preferredViewerControl(): Button = when {
+        connectButton.isEnabled && connectButton.visibility == View.VISIBLE -> connectButton
+        disconnectButton.isEnabled && disconnectButton.visibility == View.VISIBLE -> disconnectButton
+        else -> settingsButton
     }
 
     private fun setViewerKeepScreenOn(enabled: Boolean) {
@@ -346,15 +457,16 @@ class MainActivity : Activity() {
             AudioConnectionState.RECONNECTING -> getString(R.string.audio_reconnecting)
             AudioConnectionState.ERROR -> getString(R.string.audio_error_state)
         }
-        val active = state != AudioConnectionState.STOPPED
-        muteButton.isEnabled = active
-        processingButton.isEnabled = active
+        // The existing controller allows choosing Raw/Processed before connecting too.
+        processingButton.isEnabled = true
         muteButton.text = getString(
             if (audioPlaybackController.isMuted()) R.string.unmute else R.string.mute
         )
         processingButton.text = getString(
             if (audioPlaybackController.isProcessingEnabled()) R.string.processed_pcm else R.string.raw_pcm
         )
+        if (state == AudioConnectionState.PLAYING) audioErrorText.text = ""
+        refreshControls()
     }
 
     private fun formatAudioDiagnostics(diagnostics: AudioDiagnostics): String = getString(

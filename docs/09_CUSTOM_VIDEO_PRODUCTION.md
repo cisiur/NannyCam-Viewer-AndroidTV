@@ -121,7 +121,9 @@ a fresh retry. Temporarily unavailable surfaces pause retry scheduling without a
 backoff or starting headless decoding. Activity stop clears intent and retries and awaits
 decoder release; return does not automatically reconnect. No background or PiP mode exists.
 
-The single 16:9 production SurfaceView replaces PlayerView in the existing small video area.
+The single 16:9 production SurfaceView replaces PlayerView. ATV-03-UI-01 now sizes it to the
+available viewer area above a compact control bar; see `docs/10_TV_UI.md` for same-Activity
+settings navigation, which leaves the Surface attached and playback running.
 Separate POC start/stop and Media3 buffering controls are removed. Normal Connect/Disconnect,
 configuration, audio controls, and the explicitly triggered H.264 probe remain. The probe
 requires a fully disconnected viewer and does not participate in normal playback.
