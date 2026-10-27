@@ -7,6 +7,11 @@
     <string name="save">Save</string>
     <string name="connect">Connect</string>
     <string name="disconnect">Disconnect</string>
+    <string name="test_pip">Test PiP</string>
+    <string name="pip_unsupported">PiP unsupported</string>
+    <string name="pip_not_ready">PiP requires live video</string>
+    <string name="pip_request_rejected">PiP request rejected</string>
+    <string name="pip_request_failed">PiP request failed</string>
     <string name="configuration_saved">Camera endpoint saved.</string>
     <string name="settings">Settings</string>
     <string name="settings_diagnostics">Settings / Diagnostics</string>

@@ -1,11 +1,14 @@
 package com.cisiur.nannycamviewer.ui
 
 import android.app.Activity
+import android.app.PictureInPictureParams
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.util.Rational
 import android.view.KeyEvent
 import android.view.SurfaceView
 import android.view.View
@@ -16,6 +19,7 @@ import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
+import android.widget.Toast
 import com.cisiur.nannycamviewer.R
 import com.cisiur.nannycamviewer.config.CameraEndpointNormalizer
 import com.cisiur.nannycamviewer.config.CameraEndpointStore
@@ -47,6 +51,7 @@ class MainActivity : Activity() {
     private lateinit var saveButton: Button
     private lateinit var connectButton: Button
     private lateinit var disconnectButton: Button
+    private lateinit var testPipButton: Button
     private lateinit var statusText: TextView
     private lateinit var decoderText: TextView
     private lateinit var playbackController: VideoPlaybackController
@@ -62,9 +67,12 @@ class MainActivity : Activity() {
     private val audioStartupGate = ViewerAudioStartupGate()
     private val startupHandler = Handler(Looper.getMainLooper())
     private var pendingInitialAudioStart: Runnable? = null
+    private val pipLifecyclePolicy = PipLifecyclePolicy()
+    private var deferredPipStopCleanup: Runnable? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        logPipLifecycle("onCreate")
         setContentView(R.layout.activity_main)
         window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
 
@@ -81,6 +89,7 @@ class MainActivity : Activity() {
         saveButton = findViewById(R.id.save_button)
         connectButton = findViewById(R.id.connect_button)
         disconnectButton = findViewById(R.id.disconnect_button)
+        testPipButton = findViewById(R.id.test_pip_button)
         statusText = findViewById(R.id.status_text)
         decoderText = findViewById(R.id.decoder_text)
         audioStateText = findViewById(R.id.audio_state_text)
@@ -155,6 +164,7 @@ class MainActivity : Activity() {
         saveButton.setOnClickListener { saveEndpoint() }
         connectButton.setOnClickListener { connectSavedEndpoint() }
         disconnectButton.setOnClickListener { disconnectViewer() }
+        testPipButton.setOnClickListener { requestDiagnosticPip() }
         settingsButton.setOnClickListener { showSettings(true) }
         findViewById<Button>(R.id.settings_back_button).setOnClickListener { showSettings(false) }
         muteButton.setOnClickListener {
@@ -181,6 +191,24 @@ class MainActivity : Activity() {
         updatePlaybackState(ConnectionState.NOT_CONNECTED)
         updateAudioState(AudioConnectionState.STOPPED)
         preferredViewerControl().requestFocus()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // A foreground return is not PiP dismissal. It cancels only an unresolved, brief
+        // transition grace period; no media session is re-created here.
+        cancelDeferredPipStopCleanup()
+        logPipLifecycle("onStart")
+    }
+
+    override fun onResume() {
+        super.onResume()
+        logPipLifecycle("onResume")
+    }
+
+    override fun onPause() {
+        logPipLifecycle("onPause")
+        super.onPause()
     }
 
     @Suppress("DEPRECATION")
@@ -216,6 +244,7 @@ class MainActivity : Activity() {
     }
 
     private fun disconnectViewer() {
+        cancelDeferredPipStopCleanup()
         resetAudioStartupGate("Viewer session disconnected; audio-start gate reset")
         playbackController.disconnect()
         audioPlaybackController.disconnect()
@@ -227,17 +256,42 @@ class MainActivity : Activity() {
         h264Probe?.close()
         h264Probe = null
         refreshControls()
-        resetAudioStartupGate("Viewer session lifecycle release; audio-start gate reset")
-        setViewerKeepScreenOn(false)
-        playbackController.releaseForLifecycle()
-        audioPlaybackController.releaseForLifecycle()
+        when (pipLifecyclePolicy.onStop(isPlatformInPipMode())) {
+            PipStopDecision.PRESERVE_PLAYBACK -> {
+                Log.i(PIP_TAG, "onStop pip=true cleanupDeferred=true; retaining existing media session")
+            }
+            PipStopDecision.DEFER_CLEANUP -> {
+                Log.i(PIP_TAG, "onStop pip=false PiP request pending; delaying cleanup for platform confirmation")
+                deferPipStopCleanup()
+            }
+            PipStopDecision.CLEANUP_NOW -> cleanupForLifecycle("onStop")
+        }
+        logPipLifecycle("onStop")
         super.onStop()
     }
 
     override fun onDestroy() {
+        logPipLifecycle("onDestroy")
+        cancelDeferredPipStopCleanup()
         unregisterSettingsBack?.invoke()
+        if (pipLifecyclePolicy.onDestroy() == PipStopDecision.CLEANUP_NOW) {
+            cleanupForLifecycle("onDestroy")
+        }
         playbackController.destroy()
         super.onDestroy()
+    }
+
+    @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION") // The one-argument callback is the API 30 callback under test.
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode)
+        pipLifecyclePolicy.onPipModeChanged()
+        if (isInPictureInPictureMode) cancelDeferredPipStopCleanup()
+        updatePipPresentation(isInPictureInPictureMode)
+        Log.i(
+            PIP_TAG,
+            "PiP mode changed: callback=$isInPictureInPictureMode platform=${isPlatformInPipMode()} " +
+                "video=${playbackController.state} surface=${isVideoSurfaceValid()}"
+        )
     }
 
     private fun saveEndpoint(): Boolean {
@@ -381,10 +435,17 @@ class MainActivity : Activity() {
         disconnectButton.visibility = if (controls.canDisconnect) View.VISIBLE else View.GONE
         muteButton.visibility = if (controls.canDisconnect) View.VISIBLE else View.GONE
         muteButton.isEnabled = audioPlaybackController.connectionState != AudioConnectionState.STOPPED
+        testPipButton.isEnabled = PipEntryGate.canRequest(
+            deviceSupportsPip = deviceSupportsPip(),
+            playbackState = playbackController.state,
+            surfaceValid = isVideoSurfaceValid(),
+            showingSettings = showingSettings,
+            requestPending = pipLifecyclePolicy.requestPending
+        )
         // Keep the probe reachable so its guard can explain why Disconnect is required.
         h264ProbeButton.isEnabled = h264Probe == null
         updateStatus(playbackController.state)
-        val buttons = listOf(connectButton, disconnectButton, muteButton, settingsButton)
+        val buttons = listOf(connectButton, disconnectButton, muteButton, testPipButton, settingsButton)
         val focusOrder = buttons.filter { it.visibility == View.VISIBLE && it.isEnabled }
         focusOrder.forEachIndexed { index, button ->
             button.nextFocusLeftId = focusOrder.getOrElse(index - 1) { button }.id
@@ -404,6 +465,119 @@ class MainActivity : Activity() {
         connectButton.isEnabled && connectButton.visibility == View.VISIBLE -> connectButton
         disconnectButton.isEnabled && disconnectButton.visibility == View.VISIBLE -> disconnectButton
         else -> settingsButton
+    }
+
+    private fun requestDiagnosticPip() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            Log.i(PIP_TAG, "PiP requested on an Android version without the PiP entry API")
+            showPipMessage(R.string.pip_unsupported)
+            return
+        }
+        requestDiagnosticPipApi26()
+    }
+
+    @android.annotation.TargetApi(Build.VERSION_CODES.O)
+    private fun requestDiagnosticPipApi26() {
+        val supported = deviceSupportsPip()
+        val surfaceValid = isVideoSurfaceValid()
+        val state = playbackController.state
+        Log.i(PIP_TAG, "PiP requested")
+        Log.i(PIP_TAG, "Device supports PiP: $supported")
+        Log.i(PIP_TAG, "Current playback state: $state")
+        Log.i(PIP_TAG, "Surface valid: $surfaceValid")
+        if (!PipEntryGate.canRequest(supported, state, surfaceValid, showingSettings, pipLifecyclePolicy.requestPending)) {
+            Log.w(PIP_TAG, "PiP request rejected before API call")
+            showPipMessage(
+                when {
+                    !supported -> R.string.pip_unsupported
+                    else -> R.string.pip_not_ready
+                }
+            )
+            refreshControls()
+            return
+        }
+        if (!pipLifecyclePolicy.beginEntryRequest()) {
+            Log.w(PIP_TAG, "PiP request ignored because a request is already pending")
+            return
+        }
+        try {
+            val entered = enterPictureInPictureMode(
+                PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9)).build()
+            )
+            Log.i(PIP_TAG, "PiP entry API returned: $entered")
+            if (!entered) {
+                pipLifecyclePolicy.entryRequestRejected()
+                showPipMessage(R.string.pip_request_rejected)
+            }
+        } catch (error: RuntimeException) {
+            pipLifecyclePolicy.entryRequestRejected()
+            Log.w(PIP_TAG, "PiP entry exception: ${error.javaClass.simpleName}: ${error.message}", error)
+            showPipMessage(R.string.pip_request_failed)
+        }
+        refreshControls()
+    }
+
+    /** Keep the single production SurfaceView attached; only surrounding chrome changes in PiP. */
+    private fun updatePipPresentation(inPip: Boolean) {
+        if (inPip) {
+            if (showingSettings) showSettings(false)
+            settingsContainer.visibility = View.GONE
+            viewerContainer.descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
+            viewerControls.visibility = View.GONE
+        } else {
+            viewerContainer.descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
+            viewerControls.visibility = View.VISIBLE
+            refreshControls()
+            if (!showingSettings) preferredViewerControl().requestFocus()
+        }
+    }
+
+    private fun deferPipStopCleanup() {
+        cancelDeferredPipStopCleanup()
+        val cleanup = Runnable {
+            deferredPipStopCleanup = null
+            when (pipLifecyclePolicy.afterDeferredStop(isPlatformInPipMode())) {
+                PipStopDecision.PRESERVE_PLAYBACK -> {
+                    Log.i(PIP_TAG, "PiP platform confirmation arrived after onStop; cleanup deferred")
+                }
+                PipStopDecision.CLEANUP_NOW -> cleanupForLifecycle("onStop without confirmed PiP")
+                PipStopDecision.DEFER_CLEANUP -> error("Deferred PiP stop cleanup cannot defer again")
+            }
+        }
+        deferredPipStopCleanup = cleanup
+        startupHandler.postDelayed(cleanup, PIP_TRANSITION_CONFIRMATION_DELAY_MS)
+    }
+
+    private fun cancelDeferredPipStopCleanup() {
+        deferredPipStopCleanup?.let(startupHandler::removeCallbacks)
+        deferredPipStopCleanup = null
+    }
+
+    private fun cleanupForLifecycle(reason: String) {
+        resetAudioStartupGate("Viewer session lifecycle release ($reason); audio-start gate reset")
+        setViewerKeepScreenOn(false)
+        playbackController.releaseForLifecycle()
+        audioPlaybackController.releaseForLifecycle()
+        Log.i(PIP_TAG, "$reason pip=${isPlatformInPipMode()} cleanupExecuted=true")
+    }
+
+    private fun deviceSupportsPip(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+        packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
+
+    private fun isPlatformInPipMode(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+        isInPictureInPictureMode
+
+    private fun isVideoSurfaceValid(): Boolean = ::videoSurface.isInitialized && videoSurface.holder.surface.isValid
+
+    private fun showPipMessage(message: Int) = Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+
+    private fun logPipLifecycle(event: String) {
+        val video = if (::playbackController.isInitialized) playbackController.state else "uninitialized"
+        Log.i(
+            PIP_TAG,
+            "$event pip=${isPlatformInPipMode()} video=$video surface=${isVideoSurfaceValid()} " +
+                "cleanupDeferred=${deferredPipStopCleanup != null} requestPending=${pipLifecyclePolicy.requestPending}"
+        )
     }
 
     private fun setViewerKeepScreenOn(enabled: Boolean) {
@@ -491,5 +665,7 @@ class MainActivity : Activity() {
 
     private companion object {
         const val TAG = "ViewerStartup"
+        const val PIP_TAG = "NannyCamPiP"
+        const val PIP_TRANSITION_CONFIRMATION_DELAY_MS = 750L
     }
 }

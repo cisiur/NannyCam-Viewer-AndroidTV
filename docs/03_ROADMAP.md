@@ -170,6 +170,18 @@ Goal: keep the camera visible in a system-managed corner while another TV applic
 
 Exit: on supported hardware, the camera remains visible while another application occupies the main TV surface.
 
+### ATV-04-DIAG-01 — Fire OS 8 system PiP feasibility probe
+
+- [~] implemented; awaiting physical validation on the Amazon Fire TV Stick 4K (`AFTKRT` / `karat`, Fire OS 8)
+
+This is deliberately a diagnostic implementation, not completion of ATV-04. It adds a
+feature-gated **Test PiP** control for an already-playing viewer, requests standard Android
+system PiP at 16:9, and records lifecycle/platform outcomes under the `NannyCamPiP` log tag.
+It preserves the active `SurfaceView`, MediaCodec, RTSP, and audio sessions only while the
+platform actually reports PiP. Physical testing must establish whether a third-party PiP
+window remains visible over the launcher and foreground applications. See
+`docs/11_FIRE_OS_PIP_DIAGNOSTICS.md`.
+
 ## ATV-05 — PiP audio coexistence
 
 Goal: determine and implement the best platform-compliant audio behavior while NannyCam is in PiP.
