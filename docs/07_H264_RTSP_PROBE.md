@@ -52,8 +52,12 @@ unknown; it may indicate unusual camera/session behavior, but it is not attribut
 track and does not establish that the probe plays audio.
 
 The corrective parses the server's actual Transport header and records every observed channel
-and RTP payload type before H.264 filtering. It awaits a new physical run; the camera's video
-RTP structure and any custom-video-path decision remain unresolved.
+and RTP payload type before H.264 filtering. A subsequent physical run confirmed H.264 PT96,
+SDP fmtp with a 21-byte SPS and 4-byte PPS, in-band SPS/PPS and IDR/non-IDR, single NAL/FU-A
+packets, and negotiated interleaved `0-1`. It also observed channel 4 / PT8 with 640-byte
+payloads at about 40 ms intervals during video-only probing. No malformed H.264 payloads were
+reported. The custom video POC in `docs/08_CUSTOM_VIDEO_POC.md` explicitly ignores that extra
+channel. These findings support the experiment; production replacement remains undecided.
 
 ## SDP information recorded
 

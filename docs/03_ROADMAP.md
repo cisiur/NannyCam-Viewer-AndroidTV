@@ -61,7 +61,8 @@ Plan:
 - [ ] establish a reliable frozen-video liveness signal (the false-positive custom watchdog was removed)
 - [ ] physically verify reconnect after actual camera or network loss
 - [~] keep the viewer display awake for active connect, playback, and reconnect intent
-- [~] inspect H.264 SDP and in-band SPS/PPS/IDR before a custom video-path decision; negotiated Transport/channel and all-payload diagnostics added after an ambiguous zero-H.264 physical probe, awaiting another physical run
+- [x] physically inspect H.264 SDP and in-band SPS/PPS/IDR; probe confirmed H.264 PT96, SDP/in-band SPS/PPS, IDR/non-IDR, and negotiated interleaved 0-1
+- [~] ATV-VID-POC-01 custom RTSP/RTP H.264 → hardware MediaCodec proof-of-concept; independent video-only developer mode, awaiting physical visual validation
 - [ ] if Media3 is unsuitable, replace only the minimum required RTSP/demux layer
 
 Do not make the malformed audio track a reason to discard a working hardware video path.
