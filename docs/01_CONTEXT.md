@@ -135,12 +135,15 @@ No camera audio path, audio-focus request, or PiP entry exists in ATV-00. The ta
 audio-focus behavior with another application is intentionally deferred until real camera
 audio exists. It must not be considered physically completed from this baseline.
 
-## ATV-01 Media3 video candidate
+## Current production media architecture
 
-ATV-01 adds a Media3 video-only RTSP implementation; its transport, decoder observation,
-reconnect policy, liveness signal, and strict audio boundary are documented in
-`docs/05_ATV01_MEDIA3_VIDEO.md`. It is implementation complete only to the extent shown
-in the roadmap and awaits physical Fire TV validation.
+ATV-VID-01 promotes the physically validated custom video POC into normal Connect:
+RTSP/TCP → H.264 RTP reconstruction → bounded access units → hardware MediaCodec → SurfaceView.
+Audio retains its independent RTSP/TCP → actual PCM16LE → DSP → AudioTrack path.
+The production controller, reconnect/lifecycle policy, and initial audio gate are documented
+in `docs/09_CUSTOM_VIDEO_PRODUCTION.md`. Normal-Connect physical validation remains pending.
+Media3 is no longer a runtime dependency; `docs/05_ATV01_MEDIA3_VIDEO.md` preserves the
+historical SDP, startup-stall, and green-output findings explaining the migration.
 
 ## Source of camera knowledge
 

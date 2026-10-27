@@ -4,6 +4,7 @@ package com.cisiur.nannycamviewer.playback
 object ViewerKeepScreenOnPolicy {
     fun shouldKeepScreenOn(state: ConnectionState): Boolean = when (state) {
         ConnectionState.CONNECTING,
+        ConnectionState.WAITING_VIDEO,
         ConnectionState.PLAYING,
         ConnectionState.RECONNECTING -> true
 

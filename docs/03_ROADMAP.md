@@ -29,7 +29,7 @@ Exit: minimal APK builds, installs, launches on the physical TV device, and can 
 
 ATV-00 is not complete until the APK is installed and launched on the physical Fire TV,
 launcher visibility and remote operation are verified, and saved configuration is checked
-after relaunch. The project has no audio path yet, so audio-focus behavior remains deferred.
+after relaunch. Audio-focus characterization remains deferred to ATV-05 despite the later audio implementation.
 
 ## ATV-01 — Low-latency live video
 
@@ -51,9 +51,7 @@ Plan:
 - [x] verify the selected hardware H.264 decoder and expose selected-decoder diagnostics
 - [x] record physical Connect-to-first-frame startup timing
 - [x] physically verify first-frame startup-hang recovery
-- [~] reduce stalled-start recovery timeout based on physical startup measurements
-- [~] evaluate low-latency Media3 buffering with a physical A/B mode
-- [~] evaluate staggered initial video/audio RTSP negotiation: decoder-gated startup avoided SDP failure in one run but produced persistent green video; first-frame + 250 ms experiment awaits physical validation
+- [x] record historical Media3 startup timeout, low-latency A/B, and staggered-negotiation findings; these runtime experiments are retired after the successful custom-video POC
 - [ ] measure latency after extended playback
 - [ ] confirm no progressive lag
 - [~] implement explicit Disconnect/resource release
@@ -62,8 +60,8 @@ Plan:
 - [ ] physically verify reconnect after actual camera or network loss
 - [~] keep the viewer display awake for active connect, playback, and reconnect intent
 - [x] physically inspect H.264 SDP and in-band SPS/PPS/IDR; probe confirmed H.264 PT96, SDP/in-band SPS/PPS, IDR/non-IDR, and negotiated interleaved 0-1
-- [~] ATV-VID-POC-01 custom RTSP/RTP H.264 → hardware MediaCodec proof-of-concept; independent video-only developer mode, awaiting physical visual validation
-- [ ] if Media3 is unsuitable, replace only the minimum required RTSP/demux layer
+- [x] ATV-VID-POC-01 custom RTSP/RTP H.264 → hardware MediaCodec proof-of-concept physically validated: correct image, very fast startup, nearly unnoticeable perceived latency, no green output
+- [~] ATV-VID-01 promote the validated custom-video path to production Connect with reconnect/lifecycle/audio gating and retire Media3; production physical validation pending
 
 Do not make the malformed audio track a reason to discard a working hardware video path.
 
@@ -76,7 +74,17 @@ attempt: after 10 seconds it released the player, the one-second retry rendered 
 frame in approximately 1.47 seconds, and observed video delay was approximately 1–2
 seconds behind live. ATV-01 remains
 incomplete: extended playback, progressive-lag testing, a reliable liveness signal, and
-recovery after actual camera/network loss are still pending physical validation.
+recovery after actual camera/network loss are still pending physical validation. Media3 is now
+historical: the custom POC produced a correct image and excellent perceived latency, triggering
+ATV-VID-01. See `docs/09_CUSTOM_VIDEO_PRODUCTION.md` for the new production path.
+
+### ATV-VID-01 physical acceptance still required
+
+- [ ] normal Connect shows a correct picture with camera audio
+- [ ] verify production startup speed and live latency
+- [ ] verify Disconnect/reconnect and fresh reference-state recovery
+- [ ] verify camera/network interruption recovery
+- [ ] verify multi-minute stability and longer progressive-lag behavior
 
 ## ATV-02 — Correct camera audio
 
@@ -97,9 +105,10 @@ Goal: play the camera's real PCM16 LE audio despite the incorrect PCMA SDP decla
 - [ ] physically validate long-running audio latency
 - [ ] physically validate audio recovery after connection loss
 
-Likely architecture decision:
+Current architecture decision:
 
-If Media3 gives good video but cannot expose this malformed raw audio payload correctly, retain Media3 for video and implement a separate lightweight RTSP/RTP audio path.
+Video uses the promoted custom H.264/MediaCodec path. Audio retains its independent lightweight
+RTSP/RTP PCM16LE path; the media sessions and failure/reconnect ownership remain separate.
 
 Exit: clear live camera audio matching the previously validated PCM16 interpretation.
 

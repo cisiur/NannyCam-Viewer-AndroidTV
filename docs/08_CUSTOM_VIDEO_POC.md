@@ -1,5 +1,17 @@
 # ATV-VID-POC-01 — Custom H.264 video
 
+## Physical result and promotion
+
+The user physically validated this POC on the target Fire TV: **correct image, no green
+output, very fast startup, nearly unnoticeable perceived live latency, and excellent playback
+quality through hardware MediaCodec**. This was the custom RTSP/RTP/H.264 path, not Media3.
+No new numeric timing or endurance result is inferred from that report.
+
+ATV-VID-POC-01 is physically validated. That result triggered ATV-VID-01 production migration,
+documented in `docs/09_CUSTOM_VIDEO_PRODUCTION.md`. The original implementation below is
+retained as a historical POC snapshot. Its separate controls/controller have been promoted
+into normal Connect, not retained as a competing second implementation. Media3 is retired.
+
 ## Question and scope
 
 Can this camera render a correct picture on the Fire TV when its H.264 RTSP/RTP handling
@@ -143,7 +155,7 @@ On the Fire TV, record whether the actual picture is correct, green, black, corr
 delayed, or unstable. Also check Stop, Disconnect, repeated starts, and Activity exit, then
 confirm normal Media3 Connect and the diagnostic probe remain usable.
 
-**Physical Fire TV visual validation is still pending.** Automated parser/build checks do
-not prove correct hardware output, latency, endurance, or recovery. Media3 production
-replacement remains undecided; this POC has no audio, PiP, ATV-03 UX, FFmpeg, or custom-video
-production reconnect.
+The POC's physical visual test is complete as recorded above. **Production normal-Connect
+Fire TV validation is still pending**, including audio integration, retry/network-loss
+recovery, latency, and multi-minute stability. The POC result alone does not prove those
+new production behaviors.

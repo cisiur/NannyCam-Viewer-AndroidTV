@@ -2,9 +2,11 @@
 
 ## Scope and codec decision
 
-ATV-02 keeps Media3 `1.9.4` as the existing video-only path. The audio implementation
-uses a separate, camera-specific RTSP/TCP session so the camera's malformed SDP audio
+The audio implementation uses a separate, camera-specific RTSP/TCP session so the camera's malformed SDP audio
 metadata never reaches a stock PCMA decoder.
+ATV-VID-01 now uses custom H.264/MediaCodec for video. This migration changes only the initial
+audio orchestration; the audio transport, PCM16LE interpretation, DSP, buffering, mute,
+AudioTrack, and independent reconnect behavior are unchanged.
 
 The camera SDP labels the audio track PCMA, but physical capture proved that its RTP
 payload is signed PCM16 little-endian at 8 kHz mono. The client identifies the `m=audio`
@@ -15,7 +17,7 @@ not present.
 ## RTSP/TCP audio session
 
 `AudioPlaybackController` owns an independent TCP connection and never recreates the
-working Media3 video player. Physical Android testing confirmed that this path produces
+working video session. Physical Android testing confirmed that this path produces
 understandable, effectively live PCM16LE speech at a basic-validation level. Physical
 inspection of the Windows reference also confirmed the same intentional architecture: one
 independent RTSP/TCP session for video and another for audio, started near-simultaneously.
@@ -63,15 +65,16 @@ session timeout, so the client sent its 30-second keepalive interval. Repeated
 `GET_PARAMETER` requests were acknowledged and the prior approximately 60-second server
 closure did not recur during the observed multi-minute run.
 
-### Initial viewer startup sequencing experiment
+### Initial viewer startup gate
 
-For a narrow cold-start RTSP negotiation experiment, the Activity starts the independent
-Media3 video session first and initially gates this custom audio session until Media3 reports
-its first-frame callback plus a fixed 250 ms stabilization delay. Decoder initialization alone
-does not start audio. The first-frame callback is used only as a sequencing milestone, not as
-proof that the visible video is valid. This is not a shared socket or a change to the audio RTSP
-implementation. Once the initial audio connection has been requested, its playback, failure,
-and reconnect lifecycle remain independent from later video reconnects.
+The Activity starts the independent custom video session first. Initial audio waits until
+RTSP PLAY succeeded, the hardware decoder was configured, and the first video output was
+released to the Surface, then waits a fixed 250 ms. TCP connection or codec initialization
+alone cannot start audio. A failed attempt cancels a pending delay; a replacement attempt
+can schedule it again. Once initial audio Connect is requested, its playback and reconnect
+lifecycle remain independent from later video reconnects. Only full viewer Disconnect or
+lifecycle stop resets that gate. This replaces the historical Media3 first-frame experiment
+without changing the audio RTSP implementation.
 
 ## Interleaved RTP and packet parsing
 
@@ -138,7 +141,7 @@ Valid decoded RTP payload starts `PLAYING`; a socket EOF, I/O/RTSP failure, pars
 or output failure releases only the audio resources and retries at 1 s, 2 s, 3 s, then 5 s
 repeatedly. One retry may be pending. Explicit Disconnect and Activity stop cancel it;
 successful audio resets the sequence. Audio failure never moves the video state or restarts
-Media3.
+the video controller.
 
 The screen exposes separate audio state, Mute/Unmute, raw/processed mode, and aggregated
 audio diagnostics: selected track/control URI, payload type, RTP and PCM counts, sequence

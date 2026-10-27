@@ -28,7 +28,7 @@ data class H264SdpTrack(
 
 /** Parses only the H.264 video SDP fields needed by the diagnostic probe. */
 object H264SdpParser {
-    /** Raw NALs for the opt-in custom-video POC; probe metadata remains unchanged. */
+    /** Raw NALs for the production AVC CSD cache; probe metadata remains unchanged. */
     fun parameterSetNals(track: H264SdpTrack): List<ByteArray> =
         parseFmtpParameters(track.fmtp)["sprop-parameter-sets"]
             ?.split(',')?.mapNotNull(Base64PayloadDecoder::decode).orEmpty()

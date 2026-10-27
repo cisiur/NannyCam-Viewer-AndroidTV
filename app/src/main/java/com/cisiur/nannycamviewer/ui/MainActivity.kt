@@ -11,30 +11,24 @@ import android.view.View
 import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
-import androidx.media3.common.util.UnstableApi
 import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
-import androidx.media3.ui.PlayerView
 import com.cisiur.nannycamviewer.R
 import com.cisiur.nannycamviewer.config.CameraEndpointNormalizer
 import com.cisiur.nannycamviewer.config.CameraEndpointStore
-import com.cisiur.nannycamviewer.customvideo.CustomVideoPlaybackController
-import com.cisiur.nannycamviewer.customvideo.CustomVideoState
 import com.cisiur.nannycamviewer.audio.AudioConnectionState
 import com.cisiur.nannycamviewer.audio.AudioDiagnostics
 import com.cisiur.nannycamviewer.audio.AudioPlaybackController
 import com.cisiur.nannycamviewer.platform.PlatformDiagnostics
 import com.cisiur.nannycamviewer.platform.PlatformDiagnosticsFormatter
 import com.cisiur.nannycamviewer.playback.ConnectionState
-import com.cisiur.nannycamviewer.playback.VideoBufferingMode
 import com.cisiur.nannycamviewer.playback.VideoPlaybackController
 import com.cisiur.nannycamviewer.playback.ViewerKeepScreenOnPolicy
 import com.cisiur.nannycamviewer.probe.H264ProbeOutcome
 import com.cisiur.nannycamviewer.probe.H264ProbeResult
 import com.cisiur.nannycamviewer.probe.H264RtspProbe
 
-@UnstableApi
 class MainActivity : Activity() {
     private lateinit var endpointInput: EditText
     private lateinit var configurationMessage: TextView
@@ -49,16 +43,11 @@ class MainActivity : Activity() {
     private lateinit var audioDiagnosticsText: TextView
     private lateinit var muteButton: Button
     private lateinit var processingButton: Button
-    private lateinit var videoBufferingButton: Button
     private lateinit var h264ProbeButton: Button
     private lateinit var audioPlaybackController: AudioPlaybackController
     private var h264Probe: H264RtspProbe? = null
-    private lateinit var customVideo: CustomVideoPlaybackController
-    private lateinit var customSurface: SurfaceView
-    private lateinit var customVideoButton: Button
-    private lateinit var stopCustomVideoButton: Button
-    private lateinit var customVideoStatus: TextView
-    private var pocWindowActive = true
+    private lateinit var videoSurface: SurfaceView
+    private var viewerEndpointUri: String? = null
     private val audioStartupGate = ViewerAudioStartupGate()
     private val startupHandler = Handler(Looper.getMainLooper())
     private var pendingInitialAudioStart: Runnable? = null
@@ -80,64 +69,51 @@ class MainActivity : Activity() {
         audioDiagnosticsText = findViewById(R.id.audio_diagnostics_text)
         muteButton = findViewById(R.id.mute_button)
         processingButton = findViewById(R.id.processing_button)
-        videoBufferingButton = findViewById(R.id.video_buffering_button)
         h264ProbeButton = findViewById(R.id.h264_probe_button)
-        customSurface = findViewById(R.id.custom_video_surface)
-        customVideoButton = findViewById(R.id.custom_video_button)
-        stopCustomVideoButton = findViewById(R.id.stop_custom_video_button)
-        customVideoStatus = findViewById(R.id.custom_video_status)
+        videoSurface = findViewById(R.id.video_surface)
 
         endpointStore.load()?.let(endpointInput::setText)
         playbackController = VideoPlaybackController(
-            this,
-            findViewById<PlayerView>(R.id.video_view),
+            videoSurface,
             object : VideoPlaybackController.Listener {
                 override fun onConnectionStateChanged(state: ConnectionState) = updatePlaybackState(state)
 
                 override fun onSelectedVideoDecoder(decoderName: String, attemptId: Long) {
                     decoderText.text = getString(R.string.selected_decoder, decoderName)
-                    when (audioStartupGate.onVideoDecoderInitialized()) {
-                        ViewerAudioStartupGate.DecoderDecision.AudioRemainsGated -> {
-                            Log.i(TAG, "Video decoder initialized for attempt #$attemptId; audio remains gated")
-                        }
-                        ViewerAudioStartupGate.DecoderDecision.NoActiveSession -> {
-                            Log.i(TAG, "Ignoring decoder callback without an active viewer session")
-                        }
-                    }
                 }
 
                 override fun onPlaybackError(message: String, attemptId: Long) {
-                    statusText.text = getString(R.string.error_status, message)
+                    configurationMessage.text = getString(R.string.video_issue, message)
                     when (audioStartupGate.onVideoFailure(attemptId)) {
                         ViewerAudioStartupGate.VideoFailureDecision.CancelPendingAudioStart -> {
                             cancelPendingInitialAudioStart()
                             Log.i(TAG, "Video failed before initial audio start; pending audio start cancelled")
                         }
                         ViewerAudioStartupGate.VideoFailureDecision.AudioRemainsGated -> {
-                            Log.i(TAG, "Video attempt failed before first frame; audio remains gated")
+                            Log.i(TAG, "Video attempt failed before initial audio start; audio remains gated")
                         }
                         ViewerAudioStartupGate.VideoFailureDecision.AudioAlreadyStarted -> Unit
                         ViewerAudioStartupGate.VideoFailureDecision.NoActiveSession -> Unit
                     }
                 }
 
-                override fun onFirstFrameRendered(startupLatencyMs: Long, attemptId: Long) {
-                    configurationMessage.text = getString(R.string.first_frame_rendered, startupLatencyMs)
+                override fun onFirstVideoOutput(startupLatencyMs: Long, attemptId: Long) {
+                    configurationMessage.text = getString(R.string.first_video_output, startupLatencyMs)
                     when (val decision = audioStartupGate.onVideoFirstFrame(attemptId)) {
                         is ViewerAudioStartupGate.FirstFrameDecision.ScheduleAudio -> {
                             scheduleInitialAudioStart(decision.token)
                         }
                         ViewerAudioStartupGate.FirstFrameDecision.AlreadyScheduled -> {
-                            Log.i(TAG, "Initial audio start already scheduled; ignoring duplicate first-frame callback")
+                            Log.i(TAG, "Initial audio start already scheduled; ignoring duplicate output event")
                         }
                         ViewerAudioStartupGate.FirstFrameDecision.AlreadyStarted -> {
-                            Log.i(TAG, "Initial audio already started; ignoring later first-frame callback")
+                            Log.i(TAG, "Initial audio already started; video reconnect remains independent")
                         }
                         ViewerAudioStartupGate.FirstFrameDecision.IgnoredFailedAttempt -> {
-                            Log.i(TAG, "Ignoring first-frame callback from a failed video attempt")
+                            Log.i(TAG, "Ignoring output event from a failed video attempt")
                         }
                         ViewerAudioStartupGate.FirstFrameDecision.NoActiveSession -> {
-                            Log.i(TAG, "Ignoring first-frame callback without an active viewer session")
+                            Log.i(TAG, "Ignoring video output without an active viewer session")
                         }
                     }
                 }
@@ -158,13 +134,9 @@ class MainActivity : Activity() {
             }
         )
 
-        customVideo = CustomVideoPlaybackController(customSurface, ::updateCustomVideoState)
-        customVideoButton.setOnClickListener { startCustomVideo() }
-        stopCustomVideoButton.setOnClickListener { customVideo.stop() }
         saveButton.setOnClickListener { saveEndpoint() }
         connectButton.setOnClickListener { connectSavedEndpoint() }
         disconnectButton.setOnClickListener {
-            customVideo.stop()
             resetAudioStartupGate("Viewer session disconnected; audio-start gate reset")
             playbackController.disconnect()
             audioPlaybackController.disconnect()
@@ -177,10 +149,6 @@ class MainActivity : Activity() {
         processingButton.setOnClickListener {
             audioPlaybackController.toggleProcessing()
             updateAudioState(audioPlaybackController.connectionState)
-        }
-        videoBufferingButton.setOnClickListener {
-            updateVideoBufferingMode(playbackController.toggleBufferingMode())
-            configurationMessage.text = getString(R.string.video_buffering_applies_on_next_connection)
         }
         h264ProbeButton.setOnClickListener { runH264Probe() }
         endpointInput.setOnEditorActionListener { _, actionId, event ->
@@ -197,12 +165,9 @@ class MainActivity : Activity() {
             PlatformDiagnosticsFormatter.format(PlatformDiagnostics.collect(this))
         updatePlaybackState(ConnectionState.NOT_CONNECTED)
         updateAudioState(AudioConnectionState.STOPPED)
-        updateVideoBufferingMode(playbackController.currentBufferingMode)
     }
 
     override fun onStop() {
-        pocWindowActive = false
-        customVideo.stopForLifecycle()
         h264Probe?.close()
         h264Probe = null
         resetAudioStartupGate("Viewer session lifecycle release; audio-start gate reset")
@@ -212,13 +177,8 @@ class MainActivity : Activity() {
         super.onStop()
     }
 
-    override fun onStart() {
-        super.onStart()
-        pocWindowActive = true
-    }
-
     override fun onDestroy() {
-        customVideo.stopForLifecycle()
+        playbackController.destroy()
         super.onDestroy()
     }
 
@@ -240,20 +200,20 @@ class MainActivity : Activity() {
     }
 
     private fun connectSavedEndpoint() {
-        if (customVideo.isActive) {
-            configurationMessage.text = getString(R.string.stop_custom_video_first)
-            return
-        }
+        if (playbackController.isBusy) return
         if (h264Probe != null) {
             configurationMessage.text = getString(R.string.h264_probe_running)
             return
         }
-        val configuredEndpoint = endpointStore.load()
+        val configuredEndpoint = viewerEndpointUri ?: endpointStore.load()
         val result = configuredEndpoint?.let(CameraEndpointNormalizer::normalize)
         if (result is CameraEndpointNormalizer.Result.Valid) {
-            cancelPendingInitialAudioStart()
-            audioStartupGate.beginSession(result.uri)
-            Log.i(TAG, "Viewer session connect: video starts first; audio gated until first frame")
+            if (viewerEndpointUri == null) {
+                viewerEndpointUri = result.uri
+                audioStartupGate.beginSession(result.uri)
+            }
+            videoSurface.visibility = View.VISIBLE
+            Log.i(TAG, "Viewer session connect: hardware video first; initial audio gated until video output")
             playbackController.connect(result.uri)
         } else {
             statusText.text = getString(R.string.error_status, getString(R.string.save_endpoint_first))
@@ -263,15 +223,11 @@ class MainActivity : Activity() {
     }
 
     private fun runH264Probe() {
-        if (customVideo.isActive) {
-            configurationMessage.text = getString(R.string.stop_custom_video_first)
-            return
-        }
         if (h264Probe != null) {
             configurationMessage.text = getString(R.string.h264_probe_running)
             return
         }
-        if (playbackController.state != ConnectionState.NOT_CONNECTED ||
+        if (viewerEndpointUri != null || playbackController.isBusy ||
             audioPlaybackController.connectionState != AudioConnectionState.STOPPED
         ) {
             configurationMessage.text = getString(R.string.disconnect_before_h264_probe)
@@ -317,44 +273,6 @@ class MainActivity : Activity() {
         probe.start()
     }
 
-    private fun startCustomVideo() {
-        if (customVideo.isActive) return
-        if (h264Probe != null || playbackController.state != ConnectionState.NOT_CONNECTED ||
-            audioPlaybackController.connectionState != AudioConnectionState.STOPPED
-        ) {
-            configurationMessage.text = getString(R.string.disconnect_before_custom_video)
-            return
-        }
-        val endpoint = endpointStore.load()?.let(CameraEndpointNormalizer::normalize)
-        if (endpoint !is CameraEndpointNormalizer.Result.Valid) {
-            configurationMessage.text = getString(R.string.save_endpoint_first)
-            return
-        }
-        findViewById<PlayerView>(R.id.video_view).visibility = View.INVISIBLE
-        customSurface.visibility = View.VISIBLE
-        customVideo.start(endpoint.uri)
-    }
-
-    private fun updateCustomVideoState(state: CustomVideoState, detail: String?) {
-        val label = getString(when (state) {
-            CustomVideoState.NOT_CONNECTED -> R.string.custom_video_not_connected
-            CustomVideoState.CONNECTING -> R.string.custom_video_connecting
-            CustomVideoState.WAITING_CONFIG -> R.string.custom_video_waiting_config
-            CustomVideoState.WAITING_IDR -> R.string.custom_video_waiting_idr
-            CustomVideoState.PLAYING -> R.string.custom_video_playing
-            CustomVideoState.STOPPING -> R.string.custom_video_stopping
-            CustomVideoState.ERROR -> R.string.custom_video_error
-        })
-        customVideoStatus.text = if (detail == null) label else getString(R.string.custom_video_detail, label, detail)
-        customVideoButton.isEnabled = !customVideo.isActive
-        stopCustomVideoButton.isEnabled = customVideo.isActive && state != CustomVideoState.STOPPING
-        if (!customVideo.isActive) {
-            customSurface.visibility = View.GONE
-            findViewById<PlayerView>(R.id.video_view).visibility = View.VISIBLE
-        }
-        updatePlaybackState(playbackController.state)
-    }
-
     private fun hideKeyboardAndCompleteInput() {
         val inputMethodManager = getSystemService(InputMethodManager::class.java)
         inputMethodManager.hideSoftInputFromWindow(endpointInput.windowToken, 0)
@@ -363,19 +281,18 @@ class MainActivity : Activity() {
     }
 
     private fun updatePlaybackState(state: ConnectionState) {
-        val customActive = ::customVideo.isInitialized && customVideo.isActive
-        setViewerKeepScreenOn(ViewerKeepScreenOnPolicy.shouldKeepScreenOn(state) || (customActive && pocWindowActive))
-        if (state != ConnectionState.ERROR) {
-            statusText.text = when (state) {
-                ConnectionState.NOT_CONNECTED -> getString(R.string.not_connected)
-                ConnectionState.CONNECTING -> getString(R.string.connecting)
-                ConnectionState.PLAYING -> getString(R.string.playing)
-                ConnectionState.RECONNECTING -> getString(R.string.reconnecting)
-                ConnectionState.ERROR -> getString(R.string.error)
-            }
+        setViewerKeepScreenOn(ViewerKeepScreenOnPolicy.shouldKeepScreenOn(state))
+        statusText.text = when (state) {
+            ConnectionState.NOT_CONNECTED -> getString(R.string.not_connected)
+            ConnectionState.CONNECTING -> getString(R.string.connecting)
+            ConnectionState.WAITING_VIDEO -> getString(R.string.waiting_for_video)
+            ConnectionState.PLAYING -> getString(R.string.playing)
+            ConnectionState.RECONNECTING -> getString(R.string.reconnecting)
+            ConnectionState.ERROR -> getString(R.string.error)
         }
-        connectButton.isEnabled = state == ConnectionState.NOT_CONNECTED && hasValidSavedEndpoint() && !customActive
-        disconnectButton.isEnabled = state != ConnectionState.NOT_CONNECTED || customActive
+        connectButton.isEnabled = !playbackController.isBusy && hasValidSavedEndpoint()
+        disconnectButton.isEnabled = viewerEndpointUri != null || playbackController.isBusy
+        if (!playbackController.isBusy) videoSurface.visibility = View.INVISIBLE
     }
 
     private fun setViewerKeepScreenOn(enabled: Boolean) {
@@ -389,6 +306,7 @@ class MainActivity : Activity() {
     private fun resetAudioStartupGate(message: String) {
         cancelPendingInitialAudioStart()
         audioStartupGate.reset()
+        viewerEndpointUri = null
         Log.i(TAG, message)
     }
 
@@ -410,7 +328,7 @@ class MainActivity : Activity() {
         startupHandler.postDelayed(runnable, ViewerAudioStartupGate.INITIAL_AUDIO_AFTER_FIRST_FRAME_DELAY_MS)
         Log.i(
             TAG,
-            "First video-frame callback received; scheduling initial audio in " +
+            "First hardware video output received; scheduling initial audio in " +
                 "${ViewerAudioStartupGate.INITIAL_AUDIO_AFTER_FIRST_FRAME_DELAY_MS}ms"
         )
     }
@@ -437,10 +355,6 @@ class MainActivity : Activity() {
         processingButton.text = getString(
             if (audioPlaybackController.isProcessingEnabled()) R.string.processed_pcm else R.string.raw_pcm
         )
-    }
-
-    private fun updateVideoBufferingMode(mode: VideoBufferingMode) {
-        videoBufferingButton.text = getString(R.string.video_buffering_mode, mode.label)
     }
 
     private fun formatAudioDiagnostics(diagnostics: AudioDiagnostics): String = getString(

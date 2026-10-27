@@ -6,11 +6,10 @@ import org.junit.Test
 
 class ViewerAudioStartupGateTest {
     @Test
-    fun `decoder initialization keeps initial audio gated`() {
+    fun `first decoder output is the initial audio gate milestone`() {
         val gate = ViewerAudioStartupGate()
         gate.beginSession("rtsp://camera/streamtype=0")
 
-        assertTrue(gate.onVideoDecoderInitialized() is ViewerAudioStartupGate.DecoderDecision.AudioRemainsGated)
         assertTrue(gate.onVideoFirstFrame(1) is ViewerAudioStartupGate.FirstFrameDecision.ScheduleAudio)
     }
 
@@ -25,12 +24,10 @@ class ViewerAudioStartupGateTest {
     }
 
     @Test
-    fun `duplicate decoder and first frame events do not duplicate audio startup`() {
+    fun `duplicate video output events do not duplicate audio startup`() {
         val gate = ViewerAudioStartupGate()
         gate.beginSession("rtsp://camera/streamtype=0")
 
-        gate.onVideoDecoderInitialized()
-        gate.onVideoDecoderInitialized()
         val scheduled = gate.onVideoFirstFrame(1) as ViewerAudioStartupGate.FirstFrameDecision.ScheduleAudio
         assertTrue(gate.onVideoFirstFrame(1) is ViewerAudioStartupGate.FirstFrameDecision.AlreadyScheduled)
         gate.consumeDelayedAudioStart(scheduled.token)
@@ -82,5 +79,15 @@ class ViewerAudioStartupGateTest {
 
         assertTrue(gate.onVideoFailure(2) is ViewerAudioStartupGate.VideoFailureDecision.AudioAlreadyStarted)
         assertTrue(gate.onVideoFirstFrame(3) is ViewerAudioStartupGate.FirstFrameDecision.AlreadyStarted)
+    }
+
+    @Test
+    fun `begin session without explicit reset cannot rearm running audio`() {
+        val gate = ViewerAudioStartupGate()
+        gate.beginSession("rtsp://camera/streamtype=0")
+        val initial = gate.onVideoFirstFrame(1) as ViewerAudioStartupGate.FirstFrameDecision.ScheduleAudio
+        gate.consumeDelayedAudioStart(initial.token)
+        gate.beginSession("rtsp://camera/streamtype=0")
+        assertTrue(gate.onVideoFirstFrame(2) is ViewerAudioStartupGate.FirstFrameDecision.AlreadyStarted)
     }
 }

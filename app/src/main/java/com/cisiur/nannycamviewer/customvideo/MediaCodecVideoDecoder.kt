@@ -6,6 +6,9 @@ import android.os.Build
 import android.os.SystemClock
 import android.util.Log
 import android.view.Surface
+import com.cisiur.nannycamviewer.playback.VideoFailure
+import com.cisiur.nannycamviewer.playback.VideoFailureKind
+import com.cisiur.nannycamviewer.playback.VideoPlaybackException
 import java.io.IOException
 import java.nio.ByteBuffer
 
@@ -14,9 +17,15 @@ class MediaCodecVideoDecoder(
     private val surface: Surface,
     private val pipeline: H264VideoPipeline,
     private val startedAtMs: Long,
-    private val onState: (CustomVideoState, String?) -> Unit
+    private val listener: Listener
 ) {
+    interface Listener {
+        fun onWaiting()
+        fun onConfigured(name: String)
+        fun onOutput(elapsedMs: Long)
+    }
     fun run(cancelled: () -> Boolean) {
+        if (Build.VERSION.SDK_INT < 29) throw VideoPlaybackException(VideoFailure(VideoFailureKind.UNSUPPORTED, "Hardware video requires Android API 29 or later", terminal = true))
         var codec: MediaCodec? = null
         var generation = -1L
         var epoch = -1L
@@ -27,17 +36,17 @@ class MediaCodecVideoDecoder(
         var outputs = 0L
         var lastStats = startedAtMs
         val info = MediaCodec.BufferInfo()
-        onState(CustomVideoState.WAITING_CONFIG, null)
+        listener.onWaiting()
         Log.i(TAG, "Waiting for SPS/PPS")
         try {
             while (!cancelled()) {
-                if (!surface.isValid) throw IOException("POC Surface is no longer valid")
+                if (!surface.isValid) throw VideoPlaybackException(VideoFailure(VideoFailureKind.SURFACE, "Video Surface is no longer valid"))
                 val configuration = pipeline.configuration.current()
                 if (!firstOutput && SystemClock.elapsedRealtime() - startedAtMs > STARTUP_TIMEOUT_MS) {
-                    throw IOException(when {
-                        configuration == null -> "Missing SPS/PPS after 15 seconds"
-                        inputs == 0L -> "No complete IDR access unit after 15 seconds"
-                        else -> "No decoded output after 15 seconds"
+                    throw VideoPlaybackException(when {
+                        configuration == null -> VideoFailure(VideoFailureKind.STARTUP_CONFIG, "Missing SPS/PPS after 15 seconds")
+                        inputs == 0L -> VideoFailure(VideoFailureKind.STARTUP_IDR, "No complete IDR access unit after 15 seconds")
+                        else -> VideoFailure(VideoFailureKind.STARTUP_OUTPUT, "No decoded output after 15 seconds")
                     })
                 }
                 if (configuration == null) {
@@ -53,7 +62,8 @@ class MediaCodecVideoDecoder(
                     playingForCodec = false
                     generation = configuration.generation
                     epoch = queueEpoch
-                    onState(CustomVideoState.WAITING_IDR, null)
+                    listener.onConfigured(codec.name)
+                    listener.onWaiting()
                     Log.i(TAG, "Decoder configured; waiting for IDR")
                 }
                 val active = codec
@@ -96,11 +106,11 @@ class MediaCodecVideoDecoder(
                                     firstOutput = true
                                     val elapsed = SystemClock.elapsedRealtime() - startedAtMs
                                     Log.i(TAG, "First decoded output buffer released to Surface after ${elapsed}ms (visual validation required)")
-                                    onState(CustomVideoState.PLAYING, "First output released after ${elapsed}ms")
+                                    listener.onOutput(elapsed)
                                     playingForCodec = true
                                 } else if (!playingForCodec) {
                                     playingForCodec = true
-                                    onState(CustomVideoState.PLAYING, "Output resumed; verify image visually")
+                                    listener.onOutput(SystemClock.elapsedRealtime() - startedAtMs)
                                 }
                             }
                         }
@@ -122,13 +132,13 @@ class MediaCodecVideoDecoder(
     }
 
     private fun createCodec(configuration: AvcConfiguration): MediaCodec {
-        // API 29 exposes a reliable hardware classification. The physical POC target is API 30.
-        if (Build.VERSION.SDK_INT < 29) throw IOException("Hardware-verified POC requires Android API 29 or later")
+        // API 29 exposes a reliable hardware classification. The physical target is API 30.
+        if (Build.VERSION.SDK_INT < 29) throw VideoPlaybackException(VideoFailure(VideoFailureKind.UNSUPPORTED, "Hardware video requires Android API 29 or later", terminal = true))
         val codec = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
         try {
             val info = codec.codecInfo
             Log.i(TAG, "Decoder created: ${codec.name} hardware=${info.isHardwareAccelerated} software=${info.isSoftwareOnly}")
-            if (!info.isHardwareAccelerated || info.isSoftwareOnly) throw IOException("Platform selected a non-hardware AVC decoder")
+            if (!info.isHardwareAccelerated || info.isSoftwareOnly) throw VideoPlaybackException(VideoFailure(VideoFailureKind.UNSUPPORTED, "Platform selected a non-hardware AVC decoder", terminal = true))
             val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, 1920, 1080).apply {
                 setByteBuffer("csd-0", ByteBuffer.wrap(H264AccessUnitAssembler.annexB(configuration.sps)))
                 setByteBuffer("csd-1", ByteBuffer.wrap(H264AccessUnitAssembler.annexB(configuration.pps)))
@@ -139,7 +149,9 @@ class MediaCodecVideoDecoder(
             return codec
         } catch (error: Exception) {
             runCatching { codec.release() }
-            throw error
+            if (error is VideoPlaybackException) throw error
+            throw VideoPlaybackException(VideoFailure(VideoFailureKind.CONFIGURATION,
+                "AVC configure/start failed: ${error.message ?: error.javaClass.simpleName}"))
         }
     }
 
@@ -150,7 +162,7 @@ class MediaCodecVideoDecoder(
     }
 
     companion object {
-        private const val TAG = "CustomVideoPoc"
+        private const val TAG = "VideoPlayback"
         private const val STARTUP_TIMEOUT_MS = 15_000L
     }
 }

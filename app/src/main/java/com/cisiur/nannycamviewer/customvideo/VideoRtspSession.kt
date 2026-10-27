@@ -9,6 +9,9 @@ import com.cisiur.nannycamviewer.audio.RtspSessionHeaderParser
 import com.cisiur.nannycamviewer.probe.H264SdpParser
 import com.cisiur.nannycamviewer.probe.ProbeRtspReader
 import com.cisiur.nannycamviewer.probe.ProbeTransportParser
+import com.cisiur.nannycamviewer.playback.VideoFailure
+import com.cisiur.nannycamviewer.playback.VideoFailureKind
+import com.cisiur.nannycamviewer.playback.VideoPlaybackException
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.Closeable
@@ -19,8 +22,12 @@ import java.net.SocketTimeoutException
 import java.net.URI
 import java.nio.charset.StandardCharsets
 
-/** Own POC-only video TCP session; never opens an audio track or calls an audio controller. */
-class CustomH264RtspSession(private val endpointUri: String, private val pipeline: H264VideoPipeline) : Closeable {
+/** Production video TCP session; audio retains its independent session and lifecycle. */
+class VideoRtspSession(
+    private val endpointUri: String,
+    private val pipeline: H264VideoPipeline,
+    private val onReady: () -> Unit
+) : Closeable {
     private val lifecycleLock = Any()
     @Volatile private var closed = false
     private var socket: Socket? = null
@@ -46,12 +53,12 @@ class CustomH264RtspSession(private val endpointUri: String, private val pipelin
             connection.soTimeout = 1_000
             val reader = ProbeRtspReader(BufferedInputStream(connection.getInputStream()))
             output = BufferedOutputStream(connection.getOutputStream())
-            Log.i(TAG, "Custom video RTSP connected")
+            Log.i(TAG, "Video RTSP connected")
             val describe = request(reader, "DESCRIBE", endpointUri, mapOf("Accept" to "application/sdp"))
             val track = H264SdpParser.findVideoTrack(describe.body.toString(StandardCharsets.UTF_8))
-                ?: throw IOException("No controlled H.264 video track in SDP")
+                ?: throw VideoPlaybackException(VideoFailure(VideoFailureKind.CONFIGURATION, "No controlled H.264 video track in SDP", terminal = true))
             if (track.packetizationMode != null && track.packetizationMode !in listOf("0", "1")) {
-                throw IOException("Unsupported H.264 packetization mode")
+                throw VideoPlaybackException(VideoFailure(VideoFailureKind.UNSUPPORTED, "Unsupported H.264 packetization mode", terminal = true))
             }
             Log.i(TAG, "Video PT=${track.payloadType} fmtpPresent=${track.fmtp != null}")
             payloadType = track.payloadType
@@ -62,7 +69,7 @@ class CustomH264RtspSession(private val endpointUri: String, private val pipelin
             val setup = request(reader, "SETUP", control, mapOf("Transport" to "RTP/AVP/TCP;unicast;interleaved=0-1"))
             val transport = ProbeTransportParser.parse(setup.header("transport"))
             if (!transport.negotiationConfirmed) throw IOException("SETUP did not confirm an interleaved channel pair")
-            if (transport.rtpChannel == 4) throw IOException("POC excludes camera channel 4; unexpected video channel mapping")
+            if (transport.rtpChannel == 4) throw VideoPlaybackException(VideoFailure(VideoFailureKind.UNSUPPORTED, "Camera channel 4 is excluded; unexpected video mapping", terminal = true))
             rtpChannel = transport.rtpChannel
             Log.i(TAG, "Video SETUP complete: RTP channel=$rtpChannel RTCP channel=${transport.rtcpChannel}")
             val session = RtspSessionHeaderParser.parse(setup.header("session"))
@@ -71,7 +78,9 @@ class CustomH264RtspSession(private val endpointUri: String, private val pipelin
             lastVideoPacketAtMs = SystemClock.elapsedRealtime()
             request(reader, "PLAY", endpointUri, mapOf("Session" to session.sessionId), ::processFrame)
             lastVideoPacketAtMs = SystemClock.elapsedRealtime()
-            keepalive.start(SystemClock.elapsedRealtime(), session.timeoutSeconds)
+            val interval = keepalive.start(SystemClock.elapsedRealtime(), session.timeoutSeconds)
+            Log.i(TAG, "Video RTSP Session timeout=${session.timeoutSeconds ?: "unspecified"}s; keepalive every ${interval}ms")
+            onReady()
             while (!closed) {
                 serviceKeepalive()
                 val event = try { reader.readEvent() } catch (_: SocketTimeoutException) { null }
@@ -81,17 +90,18 @@ class CustomH264RtspSession(private val endpointUri: String, private val pipelin
                         val responseCSeq = event.header("cseq")?.toIntOrNull()
                         if (responseCSeq != null && keepalive.acknowledge(responseCSeq)) {
                             requireSuccess(event, "GET_PARAMETER")
+                            Log.i(TAG, "Video keepalive acknowledged")
                         }
                     }
                     null -> Unit
                 }
                 if (SystemClock.elapsedRealtime() - lastVideoPacketAtMs >= 5_000) {
-                    throw IOException("Selected video RTP transport timed out (5 seconds)")
+                    throw VideoPlaybackException(VideoFailure(VideoFailureKind.RTP_TIMEOUT, "Selected video RTP transport timed out (5 seconds)"))
                 }
             }
         } finally {
-            // UI cancellation shuts down only input on an established connection. This worker
-            // can still attempt TEARDOWN before it closes the socket; there is only one writer.
+            // Best-effort TEARDOWN when the worker exits with a usable connection. Explicit
+            // cancellation closes the socket immediately to interrupt reads AND writes.
             if (sessionId != null && !connection.isClosed) {
                 runCatching { send("TEARDOWN", endpointUri, mapOf("Session" to sessionId.orEmpty())) }
             }
@@ -105,10 +115,7 @@ class CustomH264RtspSession(private val endpointUri: String, private val pipelin
     override fun close() {
         synchronized(lifecycleLock) {
             closed = true
-            socket?.let { connection ->
-                if (connection.isConnected) runCatching { connection.shutdownInput() }
-                else runCatching { connection.close() }
-            }
+            runCatching { socket?.close() }
         }
     }
 
@@ -159,7 +166,7 @@ class CustomH264RtspSession(private val endpointUri: String, private val pipelin
 
     private fun serviceKeepalive() {
         val now = SystemClock.elapsedRealtime()
-        if (keepalive.responseTimedOut(now)) throw IOException("Video RTSP keepalive timed out")
+        if (keepalive.responseTimedOut(now)) throw VideoPlaybackException(VideoFailure(VideoFailureKind.KEEPALIVE, "Video RTSP keepalive timed out"))
         if (keepalive.isDue(now)) {
             val sequence = send("GET_PARAMETER", endpointUri, mapOf("Session" to sessionId.orEmpty()))
             keepalive.requestSent(sequence, now)
@@ -177,8 +184,9 @@ class CustomH264RtspSession(private val endpointUri: String, private val pipelin
     private fun requireSuccess(response: InterleavedRtspParser.Event.Message, method: String) {
         val code = response.startLine.split(Regex("\\s+")).getOrNull(1)?.toIntOrNull()
         Log.i(TAG, "$method ${code ?: "invalid response"}")
-        if (code !in 200..299) throw IOException("$method failed: $code")
+        if (code !in 200..299) throw VideoPlaybackException(VideoFailure(VideoFailureKind.RTSP,
+            "$method failed: $code", terminal = code in listOf(401, 403, 404)))
     }
 
-    companion object { const val TAG = "CustomVideoPoc" }
+    companion object { const val TAG = "VideoPlayback" }
 }

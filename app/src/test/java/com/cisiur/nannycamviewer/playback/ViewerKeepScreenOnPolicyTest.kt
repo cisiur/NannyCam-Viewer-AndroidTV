@@ -14,18 +14,16 @@ class ViewerKeepScreenOnPolicyTest {
     @Test
     fun `active viewer states keep the display awake`() {
         assertTrue(ViewerKeepScreenOnPolicy.shouldKeepScreenOn(ConnectionState.CONNECTING))
+        assertTrue(ViewerKeepScreenOnPolicy.shouldKeepScreenOn(ConnectionState.WAITING_VIDEO))
         assertTrue(ViewerKeepScreenOnPolicy.shouldKeepScreenOn(ConnectionState.PLAYING))
         assertTrue(ViewerKeepScreenOnPolicy.shouldKeepScreenOn(ConnectionState.RECONNECTING))
     }
 
     @Test
     fun `automatic reconnect remains active but explicit disconnect does not`() {
-        val connection = ConnectionStateMachine()
-        connection.beginConnect()
-        connection.playbackFailed()
-        assertTrue(ViewerKeepScreenOnPolicy.shouldKeepScreenOn(connection.state))
-
-        connection.disconnect()
-        assertFalse(ViewerKeepScreenOnPolicy.shouldKeepScreenOn(connection.state))
+        val sequence = listOf(ConnectionState.CONNECTING, ConnectionState.WAITING_VIDEO,
+            ConnectionState.PLAYING, ConnectionState.RECONNECTING)
+        sequence.forEach { assertTrue(ViewerKeepScreenOnPolicy.shouldKeepScreenOn(it)) }
+        assertFalse(ViewerKeepScreenOnPolicy.shouldKeepScreenOn(ConnectionState.NOT_CONNECTED))
     }
 }

@@ -128,5 +128,35 @@ class LiveVideoQueueTest {
         assertArrayEquals(byteArrayOf(0, 0, 0, 1, 0x61, 1), pipeline.queue.poll()!!.accessUnit.annexB)
     }
 
+    @Test
+    fun `changed config discards queued references and waits for a fresh IDR`() {
+        val pipeline = H264VideoPipeline { }
+        pipeline.seedParameterSets(listOf(config.sps, config.pps))
+        pipeline.accept(VideoRtpPacket(1, 0, true, byteArrayOf(0x65, 1)))
+        val generation = pipeline.configuration.current()!!.generation
+        pipeline.accept(VideoRtpPacket(2, 90, false, byteArrayOf(0x68, 2)))
+        pipeline.accept(VideoRtpPacket(3, 90, true, byteArrayOf(0x61, 1)))
+        assertNull(pipeline.queue.poll())
+        pipeline.accept(VideoRtpPacket(4, 180, true, byteArrayOf(0x65, 1)))
+        val work = pipeline.queue.poll()!!
+        assertTrue(work.accessUnit.isIdr)
+        assertTrue(work.configuration.generation > generation)
+    }
+
+    @Test
+    fun `replacement pipeline cannot reuse configuration fragments or timestamps from a failed attempt`() {
+        val failed = H264VideoPipeline { }
+        failed.seedParameterSets(listOf(config.sps, config.pps))
+        failed.accept(VideoRtpPacket(1, 1234, false, byteArrayOf(0x7c, 0x85.toByte(), 1)))
+        failed.reset()
+        val replacement = H264VideoPipeline { }
+        assertNull(replacement.configuration.current())
+        replacement.accept(VideoRtpPacket(2, 1234, true, byteArrayOf(0x7c, 0x45, 2)))
+        assertNull(replacement.queue.poll())
+        replacement.seedParameterSets(listOf(config.sps, config.pps))
+        replacement.accept(VideoRtpPacket(3, 100_000, true, byteArrayOf(0x65, 1)))
+        assertEquals(0L, replacement.queue.poll()!!.ptsUs)
+    }
+
     private fun unit(idr: Boolean) = H264AccessUnit(byteArrayOf(0, 0, 0, 1, if (idr) 0x65 else 0x61), 0, idr)
 }

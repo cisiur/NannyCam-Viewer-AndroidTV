@@ -2,12 +2,13 @@
 
 ## Purpose
 
-The production video path remains Media3 `1.9.4` over RTSP/TCP, using the platform AVC
-decoder and `PlayerView`. Physical testing has exposed intermittent Media3 SDP errors
+The probe was created while production used Media3 `1.9.4` and `PlayerView`. Physical testing exposed intermittent Media3 SDP errors
 (`IllegalArgumentException: missing attribute fmtp`), startup attempts that never render a
 frame, and attempts which report decoder initialization, first frame, and `STATE_READY` while
 the visible output remains a persistent green rectangle. The healthy, independent audio path
-does not change those observations.
+does not change those observations. ATV-VID-01 has since retired Media3 and promoted the
+physically validated custom H.264/MediaCodec path; see `docs/09_CUSTOM_VIDEO_PRODUCTION.md`.
+This probe remains a separate, explicitly triggered diagnostic and is not part of Connect.
 
 This developer-only probe collects enough RTSP/SDP and H.264 RTP structure to decide whether
 the camera emits a stream that a future, minimal RTP/MediaCodec video path could consume. It is
@@ -19,7 +20,7 @@ the production player.
 The probe opens its own short-lived RTSP/TCP connection only when normal playback is fully
 disconnected. It reuses the small, proven audio-side primitives for RTSP requests, bounded
 interleaved RTSP/TCP parsing, Session header handling, and RTP header parsing. It does not share
-the audio or Media3 socket and does not change either production session.
+the audio or production-video socket and does not change either production session.
 
 It performs `DESCRIBE`, identifies the `m=video` H.264 media section, resolves its `a=control`
 URI, requests TCP-interleaved `SETUP` on channels `0-1`, then sends `PLAY`. The returned
@@ -57,7 +58,8 @@ SDP fmtp with a 21-byte SPS and 4-byte PPS, in-band SPS/PPS and IDR/non-IDR, sin
 packets, and negotiated interleaved `0-1`. It also observed channel 4 / PT8 with 640-byte
 payloads at about 40 ms intervals during video-only probing. No malformed H.264 payloads were
 reported. The custom video POC in `docs/08_CUSTOM_VIDEO_POC.md` explicitly ignores that extra
-channel. These findings support the experiment; production replacement remains undecided.
+channel. The later POC rendered a correct image on the Fire TV and triggered production
+migration. Production normal-Connect validation remains pending.
 
 ## SDP information recorded
 
@@ -122,4 +124,4 @@ An EOF or other capture error still logs accumulated evidence before surfacing a
 The probe cannot establish whether a rendered image is visually correct. Its result can only
 inform a later custom-video-path decision: valid H.264 RTP with codec parameters (from SDP or
 in-band SPS/PPS), IDR slices, and bounded packet structure would support further investigation.
-No replacement of the Media3 video path is implemented or implied by this probe.
+The probe itself remains read-only and does not decode or render video.

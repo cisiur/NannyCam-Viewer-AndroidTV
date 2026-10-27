@@ -45,15 +45,19 @@ See [docs/02_CAMERA_REVERSE_ENGINEERING.md](docs/02_CAMERA_REVERSE_ENGINEERING.m
 - [Camera reverse-engineering handoff](docs/02_CAMERA_REVERSE_ENGINEERING.md)
 - [Roadmap](docs/03_ROADMAP.md)
 - [Platform constraints: PiP and audio focus](docs/04_PLATFORM_PIP_AUDIO.md)
+- [Production custom video architecture](docs/09_CUSTOM_VIDEO_PRODUCTION.md)
 
 ## Intended implementation direction
 
-Initial direction:
+Current implementation:
 
 - native Android/Kotlin application;
 - one codebase where practical for Android TV and Fire OS;
 - no mandatory Google Play Services in the playback core;
-- platform-native hardware H.264 decoding preferred;
-- custom handling only where the camera's malformed audio metadata makes stock playback incorrect.
+- custom RTSP/TCP H.264 depacketization and access-unit assembly feeding hardware MediaCodec;
+- a separate RTSP/TCP PCM16LE audio path preserving the physically proven camera interpretation.
 
-The exact media stack is an ATV-00/ATV-01 decision and must be validated on the physical target device before being treated as final.
+The custom video POC was physically validated with a correct image, very fast startup, and
+nearly unnoticeable perceived latency. ATV-VID-01 promotes that path to normal Connect with
+reconnect and audio integration; production normal-Connect Fire TV validation is still pending.
+Media3 has been retired from the runtime. Its investigation remains documented as history.

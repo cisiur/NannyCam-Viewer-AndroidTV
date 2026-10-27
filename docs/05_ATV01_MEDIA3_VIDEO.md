@@ -1,5 +1,11 @@
 # ATV-01 Media3 Video Implementation Notes
 
+> Historical / superseded by ATV-VID-01. Media3/ExoPlayer, PlayerView, the LoadControl A/B
+> mode, and Media3-specific timeout code have been removed from the runtime. The findings
+> below describe the earlier implementation and its physical tests, not current behavior.
+> The physically validated custom H.264/MediaCodec POC triggered production migration;
+> see `docs/08_CUSTOM_VIDEO_POC.md` and `docs/09_CUSTOM_VIDEO_PRODUCTION.md`.
+
 ## Scope
 
 ATV-01 uses Media3 `1.9.4` as a video-only RTSP path. This is the latest stable

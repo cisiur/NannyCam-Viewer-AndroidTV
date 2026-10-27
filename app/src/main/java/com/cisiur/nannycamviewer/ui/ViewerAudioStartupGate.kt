@@ -3,15 +3,9 @@ package com.cisiur.nannycamviewer.ui
 /**
  * Pure, session-scoped decision model for initially starting the independent audio connection.
  *
- * First-frame callbacks are used only as a later sequencing milestone. They do not establish
- * that Media3 has produced a visually valid camera image.
+ * The first hardware decoder output, after successful RTSP setup, is the sequencing milestone.
  */
 class ViewerAudioStartupGate {
-    sealed class DecoderDecision {
-        object AudioRemainsGated : DecoderDecision()
-        object NoActiveSession : DecoderDecision()
-    }
-
     sealed class FirstFrameDecision {
         data class ScheduleAudio(val token: Long) : FirstFrameDecision()
         object AlreadyScheduled : FirstFrameDecision()
@@ -39,14 +33,12 @@ class ViewerAudioStartupGate {
     private var lastFailedVideoAttemptId = Long.MIN_VALUE
 
     fun beginSession(uri: String) {
+        if (viewerUri != null) return // Only explicit viewer reset re-arms initial audio.
         viewerUri = uri
         audioStartedForSession = false
         scheduledAudioToken = null
         lastFailedVideoAttemptId = Long.MIN_VALUE
     }
-
-    fun onVideoDecoderInitialized(): DecoderDecision =
-        if (viewerUri == null) DecoderDecision.NoActiveSession else DecoderDecision.AudioRemainsGated
 
     fun onVideoFirstFrame(attemptId: Long): FirstFrameDecision {
         if (viewerUri == null) return FirstFrameDecision.NoActiveSession

@@ -12,7 +12,7 @@ import com.cisiur.nannycamviewer.playback.ReconnectPolicy
 import java.io.IOException
 
 /**
- * Owns the camera-specific audio RTSP session and AudioTrack independently from Media3 video.
+ * Owns the camera-specific audio RTSP session and AudioTrack independently from video.
  * No audio-focus policy is requested here; that platform work is intentionally deferred to ATV-05.
  */
 class AudioPlaybackController(
