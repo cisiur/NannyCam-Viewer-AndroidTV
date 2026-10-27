@@ -26,7 +26,8 @@ import com.cisiur.nannycamviewer.playback.ConnectionState
 import com.cisiur.nannycamviewer.playback.VideoBufferingMode
 import com.cisiur.nannycamviewer.playback.VideoPlaybackController
 import com.cisiur.nannycamviewer.playback.ViewerKeepScreenOnPolicy
-import com.cisiur.nannycamviewer.probe.H264ProbeSummary
+import com.cisiur.nannycamviewer.probe.H264ProbeOutcome
+import com.cisiur.nannycamviewer.probe.H264ProbeResult
 import com.cisiur.nannycamviewer.probe.H264RtspProbe
 
 @UnstableApi
@@ -249,14 +250,15 @@ class MainActivity : Activity() {
         probe = H264RtspProbe(
             endpointUri = result.uri,
             listener = object : H264RtspProbe.Listener {
-                override fun onComplete(summary: H264ProbeSummary) {
+                override fun onComplete(result: H264ProbeResult) {
                     runOnUiThread {
                         if (h264Probe === probe) {
                             h264Probe = null
-                            configurationMessage.text = getString(
-                                R.string.h264_probe_complete,
-                                summary.rtpPackets
-                            )
+                            configurationMessage.text = if (result.outcome == H264ProbeOutcome.H264_RTP_DETECTED) {
+                                getString(R.string.h264_probe_complete, result.h264.rtpPackets)
+                            } else {
+                                getString(R.string.h264_probe_no_matching_rtp)
+                            }
                         }
                     }
                 }

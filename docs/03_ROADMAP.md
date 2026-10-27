@@ -61,7 +61,7 @@ Plan:
 - [ ] establish a reliable frozen-video liveness signal (the false-positive custom watchdog was removed)
 - [ ] physically verify reconnect after actual camera or network loss
 - [~] keep the viewer display awake for active connect, playback, and reconnect intent
-- [~] inspect H.264 SDP and in-band SPS/PPS/IDR before a custom video-path decision
+- [~] inspect H.264 SDP and in-band SPS/PPS/IDR before a custom video-path decision; negotiated Transport/channel and all-payload diagnostics added after an ambiguous zero-H.264 physical probe, awaiting another physical run
 - [ ] if Media3 is unsuitable, replace only the minimum required RTSP/demux layer
 
 Do not make the malformed audio track a reason to discard a working hardware video path.

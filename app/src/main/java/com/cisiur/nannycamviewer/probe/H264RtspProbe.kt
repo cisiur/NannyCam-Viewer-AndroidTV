@@ -3,13 +3,11 @@ package com.cisiur.nannycamviewer.probe
 import android.os.SystemClock
 import android.util.Log
 import com.cisiur.nannycamviewer.audio.InterleavedRtspParser
-import com.cisiur.nannycamviewer.audio.RtpPacketParser
 import com.cisiur.nannycamviewer.audio.RtspRequestBuilder
 import com.cisiur.nannycamviewer.audio.RtspSessionHeaderParser
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.Closeable
-import java.io.EOFException
 import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.Socket
@@ -26,7 +24,7 @@ class H264RtspProbe(
     private val listener: Listener
 ) : Closeable {
     interface Listener {
-        fun onComplete(summary: H264ProbeSummary)
+        fun onComplete(result: H264ProbeResult)
         fun onFailure(message: String)
     }
 
@@ -50,13 +48,15 @@ class H264RtspProbe(
     }
 
     private fun runSafely() {
+        Log.i(TAG, "H264 probe worker started")
         try {
-            val summary = runProbe()
-            listener.onComplete(summary)
+            val result = runProbe()
+            if (!closed) listener.onComplete(result)
         } catch (error: Exception) {
             if (!closed) {
-                Log.w(TAG, "H264 probe failed: ${error.message}")
-                listener.onFailure(error.message ?: "H264 probe failed")
+                val message = redactUserInfo(error.message ?: "H264 probe failed")
+                Log.w(TAG, "H264 probe failed: $message")
+                listener.onFailure(message)
             }
         } finally {
             sendTeardown()
@@ -65,25 +65,27 @@ class H264RtspProbe(
     }
 
     @Throws(IOException::class)
-    private fun runProbe(): H264ProbeSummary {
+    private fun runProbe(): H264ProbeResult {
         val endpoint = URI(endpointUri)
         if (!endpoint.scheme.equals("rtsp", ignoreCase = true) || endpoint.host.isNullOrBlank()) {
             throw IOException("Configured endpoint is not a valid RTSP URI")
         }
         val connectedSocket = Socket()
         socket = connectedSocket
+        val port = endpoint.port.takeIf { it > 0 } ?: DEFAULT_RTSP_PORT
+        Log.i(TAG, "Connecting RTSP TCP to ${endpoint.host}:$port")
         connectedSocket.connect(
-            InetSocketAddress(endpoint.host, endpoint.port.takeIf { it > 0 } ?: DEFAULT_RTSP_PORT),
+            InetSocketAddress(endpoint.host, port),
             CONNECT_TIMEOUT_MS
         )
+        Log.i(TAG, "RTSP TCP connected")
         connectedSocket.soTimeout = READ_TIMEOUT_MS
         val input = BufferedInputStream(connectedSocket.getInputStream())
         output = BufferedOutputStream(connectedSocket.getOutputStream())
-        val parser = InterleavedRtspParser()
+        val reader = ProbeRtspReader(input)
 
         val describe = requestAndAwait(
-            input,
-            parser,
+            reader,
             method = "DESCRIBE",
             uri = endpointUri,
             headers = mapOf("Accept" to "application/sdp")
@@ -100,98 +102,88 @@ class H264RtspProbe(
         logSdp(track, controlUri)
 
         val setup = requestAndAwait(
-            input,
-            parser,
+            reader,
             method = "SETUP",
             uri = controlUri,
-            headers = mapOf("Transport" to "RTP/AVP/TCP;unicast;interleaved=0-1")
+            headers = mapOf("Transport" to "RTP/AVP/TCP;unicast;interleaved=${ProbeTransportParser.REQUESTED_INTERLEAVED}")
         )
         requireSuccess(setup, "SETUP")
+        val transport = ProbeTransportParser.parse(setup.header("transport"))
+        Log.i(TAG, "SETUP Transport response: ${redactUserInfo(transport.originalHeader ?: "<missing>")}")
+        if (transport.negotiationConfirmed) {
+            Log.i(TAG, "Negotiated interleaved RTP channel=${transport.rtpChannel} RTCP channel=${transport.rtcpChannel}")
+        } else {
+            Log.w(TAG, "SETUP has no valid interleaved pair; falling back to requested 0-1 for diagnostics; negotiation unconfirmed")
+        }
         sessionId = RtspSessionHeaderParser.parse(setup.header("session"))?.sessionId
             ?: throw IOException("SETUP response did not include a Session header")
 
+        val diagnostics = H264CaptureDiagnostics(track, transport)
         val play = requestAndAwait(
-            input,
-            parser,
+            reader,
             method = "PLAY",
             uri = endpointUri,
-            headers = mapOf("Session" to sessionId.orEmpty())
+            headers = mapOf("Session" to sessionId.orEmpty()),
+            onFrame = diagnostics::observe
         )
         requireSuccess(play, "PLAY")
-        val summary = captureVideoPackets(input, parser, track)
-        logSummary(summary)
+        val result = captureVideoPackets(reader, diagnostics)
+        val summary = result.h264
         if (!track.spropParameterSetsPresent && (summary.spsInRtp || summary.ppsInRtp)) {
             Log.i(TAG, "H264 codec parameters are present in-band over RTP despite missing SDP sprop-parameter-sets")
         }
-        return summary
+        return result
     }
 
     private fun requestAndAwait(
-        input: BufferedInputStream,
-        parser: InterleavedRtspParser,
+        reader: ProbeRtspReader,
         method: String,
         uri: String,
-        headers: Map<String, String>
+        headers: Map<String, String>,
+        onFrame: (InterleavedRtspParser.Event.InterleavedFrame) -> Unit = {}
     ): InterleavedRtspParser.Event.Message {
         val requestCSeq = sendRequest(method, uri, headers)
-        val buffer = ByteArray(READ_BUFFER_BYTES)
         while (!closed) {
-            val count = input.read(buffer)
-            if (count < 0) throw EOFException("RTSP server closed the connection")
-            parser.feed(buffer, count).forEach { event ->
-                if (event is InterleavedRtspParser.Event.Message && event.header("cseq")?.toIntOrNull() == requestCSeq) {
-                    return event
-                }
+            when (val event = reader.readEvent()) {
+                is InterleavedRtspParser.Event.Message ->
+                    if (event.header("cseq")?.toIntOrNull() == requestCSeq) return event
+                is InterleavedRtspParser.Event.InterleavedFrame -> onFrame(event)
+                null -> Unit
             }
         }
         throw IOException("H264 probe was closed")
     }
 
     private fun captureVideoPackets(
-        input: BufferedInputStream,
-        parser: InterleavedRtspParser,
-        track: H264SdpTrack
-    ): H264ProbeSummary {
-        val statistics = H264ProbeStatistics(track)
+        reader: ProbeRtspReader,
+        diagnostics: H264CaptureDiagnostics
+    ): H264ProbeResult {
+        Log.i(TAG, "Starting bounded RTP capture")
         val startedAtMs = SystemClock.elapsedRealtime()
-        val buffer = ByteArray(READ_BUFFER_BYTES)
-        var malformedPayloadLogged = false
-        while (!closed && statistics.summary().rtpPackets < MAX_VIDEO_RTP_PACKETS) {
-            if (SystemClock.elapsedRealtime() - startedAtMs >= CAPTURE_DURATION_MS) break
-            val count = try {
-                input.read(buffer)
-            } catch (_: SocketTimeoutException) {
-                continue
-            }
-            if (count < 0) throw EOFException("RTSP server closed the connection")
-            for (event in parser.feed(buffer, count)) {
-                if (statistics.summary().rtpPackets >= MAX_VIDEO_RTP_PACKETS) break
-                if (event !is InterleavedRtspParser.Event.InterleavedFrame || event.channel != RTP_CHANNEL) continue
-                val packet = RtpPacketParser.parse(event.payload)
-                if (packet == null) {
-                    statistics.observeMalformedRtpPacket()
-                    if (!malformedPayloadLogged) {
-                        Log.w(TAG, "Ignoring malformed RTP packet during H264 probe")
-                        malformedPayloadLogged = true
-                    }
-                } else if (packet.payloadType == track.payloadType) {
-                    val inspection = statistics.observe(packet.sequenceNumber, packet.payload)
-                    if (!malformedPayloadLogged &&
-                        (inspection is H264PayloadInspection.Malformed ||
-                            inspection is H264PayloadInspection.Unsupported)
-                    ) {
-                        Log.w(TAG, "Ignoring malformed or unsupported H264 RTP payload during probe")
-                        malformedPayloadLogged = true
-                    }
+        try {
+            while (!closed && diagnostics.selectedH264Packets < MAX_VIDEO_RTP_PACKETS) {
+                if (SystemClock.elapsedRealtime() - startedAtMs >= CAPTURE_DURATION_MS) break
+                val event = try {
+                    reader.readEvent()
+                } catch (_: SocketTimeoutException) {
+                    continue
                 }
+                if (event is InterleavedRtspParser.Event.InterleavedFrame) diagnostics.observe(event)
             }
+        } finally {
+            Log.i(TAG, "RTP capture finished")
+            // Preserve evidence even if EOF, socket failure, or cancellation ends capture early.
+            logSummary(diagnostics.result())
         }
-        val summary = statistics.summary()
-        if (summary.rtpPackets == 0) throw IOException("No H.264 RTP packets received within capture limit")
-        return summary
+        return diagnostics.result()
     }
 
     private fun sendRequest(method: String, uri: String, headers: Map<String, String>): Int {
+        if (method == "SETUP") {
+            Log.i(TAG, "Sending SETUP: requested interleaved=${ProbeTransportParser.REQUESTED_INTERLEAVED}")
+        } else {
+            Log.i(TAG, "Sending $method")
+        }
         val requestCSeq = cSeq++
         val activeOutput = output ?: throw IOException("RTSP output is unavailable")
         activeOutput.write(RtspRequestBuilder.build(method, uri, requestCSeq, headers).toByteArray(StandardCharsets.ISO_8859_1))
@@ -206,24 +198,45 @@ class H264RtspProbe(
 
     private fun requireSuccess(message: InterleavedRtspParser.Event.Message, request: String) {
         val statusCode = message.startLine.split(Regex("\\s+")).getOrNull(1)?.toIntOrNull()
-        if (statusCode !in 200..299) throw IOException("$request failed: ${message.startLine}")
+        Log.i(TAG, "$request response: ${statusCode ?: "<invalid>"}")
+        if (statusCode !in 200..299) throw IOException("$request failed: status ${statusCode ?: "<invalid>"}")
     }
 
     private fun logSdp(track: H264SdpTrack, resolvedControlUri: String) {
+        Log.i(TAG, "Video SDP selected: payloadType=${track.payloadType} mediaLine=${track.mediaLine}")
+        Log.i(TAG, "Video control: ${redactUserInfo(track.control)}")
+        Log.i(TAG, "Resolved video control URI: ${uriForLog(resolvedControlUri)}")
+        Log.i(TAG, "rtpmap=${track.rtpMap} fmtpPresent=${track.fmtp != null} " +
+            "packetizationMode=${track.packetizationMode ?: "<missing>"} " +
+            "spropParameterSetsPresent=${track.spropParameterSetsPresent}")
         Log.i(
             TAG,
-            "H264 probe SDP:\n${track.mediaLine}\npayloadType=${track.payloadType}\n" +
+            "H264 probe SDP:\nmediaLine=${track.mediaLine}\npayloadType=${track.payloadType}\n" +
                 "rtpmap=${track.rtpMap ?: "<missing>"}\nfmtpPresent=${track.fmtp != null}\n" +
                 "fmtp=${track.fmtp?.let { "a=fmtp:${track.payloadType} $it" } ?: "<missing>"}\n" +
                 "packetizationMode=${track.packetizationMode ?: "<missing>"}\n" +
                 "spropParameterSetsPresent=${track.spropParameterSetsPresent}\n" +
                 "parameterSetCount=${track.parameterSets.size}\n" +
                 "spsBytes=${track.spsByteCount ?: 0}\nppsBytes=${track.ppsByteCount ?: 0}\n" +
-                "control=${track.control}\nresolvedControl=${uriForLog(resolvedControlUri)}"
+                "control=${redactUserInfo(track.control)}\nresolvedControl=${uriForLog(resolvedControlUri)}"
         )
     }
 
-    private fun logSummary(summary: H264ProbeSummary) {
+    private fun logSummary(result: H264ProbeResult) {
+        val summary = result.h264
+        result.frameSamples.forEach { sample ->
+            Log.i(TAG, "Observed interleaved frame channel=${sample.channel} bytes=${sample.frameBytes} " +
+                "payloadType=${sample.payloadType} seq=${sample.sequenceNumber} payloadBytes=${sample.payloadBytes} " +
+                "selectedH264=${sample.selectedH264} rtcpChannel=${sample.isRtcpChannel}")
+        }
+        Log.i(TAG, "H264 probe transport summary: outcome=${result.outcome} " +
+            "expectedPayloadType=${result.expectedPayloadType} requestedInterleaved=${ProbeTransportParser.REQUESTED_INTERLEAVED} " +
+            "negotiatedRtpChannel=${result.transport.rtpChannel} negotiatedRtcpChannel=${result.transport.rtcpChannel} " +
+            "negotiationConfirmed=${result.transport.negotiationConfirmed}")
+        Log.i(TAG, "observedInterleavedChannels=${result.observedInterleavedChannels}")
+        Log.i(TAG, "observedPayloadTypes=${result.observedPayloadTypes} channelPayloadTypes=${result.channelPayloadTypes}")
+        Log.i(TAG, "selectedH264Packets=${summary.rtpPackets} nonRtpOrMalformedFrames=${result.nonRtpOrMalformedFrames} " +
+            "rtcpChannelFrames=${result.rtcpChannelFrames}")
         Log.i(
             TAG,
             "H264 probe summary:\nrtpPackets=${summary.rtpPackets}\nsingleNal=${summary.singleNalPackets}\n" +
@@ -252,13 +265,14 @@ class H264RtspProbe(
         "${parsed.scheme}://${parsed.host}${parsed.path ?: ""}"
     }.getOrDefault("RTSP URI")
 
+    private fun redactUserInfo(value: String): String =
+        value.replace(Regex("(?i)(rtsp://)[^\\s/]*@"), "$1<redacted>@")
+
     private companion object {
         const val TAG = "H264RtspProbe"
         const val DEFAULT_RTSP_PORT = 554
         const val CONNECT_TIMEOUT_MS = 5_000
         const val READ_TIMEOUT_MS = 1_000
-        const val READ_BUFFER_BYTES = 4 * 1024
-        const val RTP_CHANNEL = 0
         const val MAX_VIDEO_RTP_PACKETS = 50
         const val CAPTURE_DURATION_MS = 5_000L
     }

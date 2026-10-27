@@ -126,10 +126,6 @@ class H264ProbeStatistics(track: H264SdpTrack) {
         return inspection
     }
 
-    fun observeMalformedRtpPacket() {
-        malformedOrUnsupportedPayloads++
-    }
-
     fun summary(): H264ProbeSummary = H264ProbeSummary(
         rtpPackets = rtpPackets,
         singleNalPackets = singleNalPackets,

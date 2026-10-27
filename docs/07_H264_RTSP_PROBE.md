@@ -22,11 +22,38 @@ interleaved RTSP/TCP parsing, Session header handling, and RTP header parsing. I
 the audio or Media3 socket and does not change either production session.
 
 It performs `DESCRIBE`, identifies the `m=video` H.264 media section, resolves its `a=control`
-URI, performs TCP-interleaved `SETUP` on channels `0-1`, then sends `PLAY`. Channel 0 RTP packets
-for the selected video payload type are structurally inspected. The worker stops after 50 video
-RTP packets or five seconds of capture, whichever happens first, then makes a best-effort
+URI, requests TCP-interleaved `SETUP` on channels `0-1`, then sends `PLAY`. The returned
+Transport header determines the RTP/RTCP channel pair. Case-insensitive `interleaved=X-Y`
+parameters with distinct channel numbers in `0..255` are accepted. If the pair is missing or
+malformed, the probe clearly logs unconfirmed negotiation and falls back to requested `0-1`
+only to continue collecting diagnostics. Only parsed RTP on the selected RTP channel with the
+SDP H.264 payload type reaches H.264 inspection.
+
+The worker stops after 50 selected H.264 RTP packets or five seconds of capture, whichever
+happens first. Unexpected channels or payload types do not shorten that window. It makes a best-effort
 `TEARDOWN` and closes the socket. RTSP text and interleaved `$` frames remain parsed by one
 authoritative reader. No raw H.264 payload dump is produced.
+
+The probe reader retains events after a response in the same TCP read, including frames
+coalesced with the `PLAY` response. Frames arriving while waiting for that response also
+contribute to capture diagnostics. Production audio helpers and playback behavior are unchanged.
+
+## First physical probe result and transport corrective
+
+The first physical probe reached the packet-capture stage, then ended after approximately
+five seconds with `No H.264 RTP packets received within capture limit`. That result was
+ambiguous: the initial probe hard-coded channel 0 and silently discarded both other channels
+and RTP payload types that differed from the selected SDP H.264 payload type. It did not prove
+that the server sent no RTP.
+
+Physical testing also reported a very brief static/noise burst immediately after starting the
+probe. The probe intentionally creates no audio output path or `AudioTrack`. The source is
+unknown; it may indicate unusual camera/session behavior, but it is not attributed to any
+track and does not establish that the probe plays audio.
+
+The corrective parses the server's actual Transport header and records every observed channel
+and RTP payload type before H.264 filtering. It awaits a new physical run; the camera's video
+RTP structure and any custom-video-path decision remain unresolved.
 
 ## SDP information recorded
 
@@ -45,6 +72,20 @@ metadata as video codec input.
 
 ## RTP/H.264 information recorded
 
+One-line milestone logs under `H264RtspProbe` identify worker startup, TCP connection,
+DESCRIBE/SETUP/PLAY requests and response status codes, selected video control URI, returned
+Transport header, channel negotiation/fallback, and capture start/finish.
+
+Every interleaved frame contributes to `observedInterleavedChannels`. Frames on the negotiated
+RTCP channel are also counted as `rtcpChannelFrames`. Recognizable RTCP headers on that channel
+(version 2, SR/RR/SDES/BYE/APP type and bounded length, per [RFC 3550](https://www.rfc-editor.org/rfc/rfc3550.html#section-6.4.1))
+and frames rejected by the RTP parser increment `nonRtpOrMalformedFrames`. Neither enters H.264
+inspection. Unexpected RTP on the RTCP channel is still recorded as RTP metadata. All
+successfully parsed RTP payload types are counted globally in `observedPayloadTypes` and by
+channel in `channelPayloadTypes`, before checking the selected channel and expected H.264 PT.
+The first eight frames retain only channel, frame length, RTP PT/sequence/payload length when
+available, and selection metadata. No per-packet log stream or payload retention is added.
+
 RTP parsing validates version, variable CSRC count, header extensions, padding, and payload
 boundaries before the probe looks only at H.264 packet structure. It classifies:
 
@@ -58,6 +99,13 @@ summary records RTP packet count, single-NAL/STAP-A/FU-A counts, SPS/PPS source 
 or neither), IDR/non-IDR presence, malformed/unsupported count, and first/last RTP sequence
 numbers. If SDP lacks `sprop-parameter-sets` but RTP carries SPS or PPS, the probe logs that the
 codec parameters are present in-band.
+
+All completed captures emit a summary, including zero-match runs. It includes expected PT,
+requested/negotiated channels, whether negotiation was confirmed, all channel/PT counts,
+selected H.264 count, non-RTP/RTCP counts, and the existing H.264 details. The structured outcome
+distinguishes H.264 RTP detected, no matching H.264 RTP, and no interleaved data. The UI reports
+zero matches as a completed probe with a prompt to see logcat, rather than a generic failure.
+An EOF or other capture error still logs accumulated evidence before surfacing an RTSP failure.
 
 ## Running it on the Fire TV
 
