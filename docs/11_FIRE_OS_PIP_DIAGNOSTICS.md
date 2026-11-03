@@ -70,6 +70,58 @@ Retrieve the evidence after each physical run with:
 C:\platform-tools\adb.exe logcat -d -v time | findstr /I "NannyCamPiP"
 ```
 
+## External camera recovery (ATV-04-RECOVERY-01)
+
+When the existing NannyCam task has been restored to Fire OS PiP but its camera session was
+released, a local ADB-shell helper can request one controlled reconnection:
+
+```powershell
+C:\platform-tools\adb.exe shell am broadcast -a com.cisiur.nannycamviewer.action.RESTORE_CAMERA -n com.cisiur.nannycamviewer/.ui.CameraRecoveryReceiver
+```
+
+The receiver is exported only with the platform `android.permission.DUMP` permission. That
+allows the ADB shell / system tooling to invoke it while preventing ordinary installed apps from
+sending the command. It accepts no endpoint argument: URI data and extras are ignored, and the
+only endpoint considered is the already-saved configuration after `CameraEndpointNormalizer`
+validation. Logs deliberately never print its credentials.
+
+The command is intentionally **not** an Activity launcher and cannot bring NannyCam to the
+foreground. It can only route to an existing `MainActivity` instance in the restored task:
+
+- In the foreground or in a still-running PiP task, it requests video-first recovery using the
+  current `SurfaceView`; audio starts only after the first video frame, as with normal Connect.
+- If the task is stopped but remains in memory, the same instance can receive the command. If its
+  surface has not returned yet, the existing controller waits for it and makes no decoder/socket
+  attempt until it does.
+- If the process or `MainActivity` has been destroyed, the receiver logs that no session owner is
+  available and does nothing. Starting an Activity from a background broadcast is deliberately
+  not attempted because Android/Fire OS background activity-launch rules can create a fullscreen
+  interruption over YouTube or TiviMate. A seamless cold-process recovery would require moving
+  playback ownership to a foreground Service, which is outside this narrowly-scoped change.
+
+Recovery is idempotent. A playing, connecting, reconnecting, or probe-running session is ignored;
+the existing controller owns one video attempt and one bounded retry path. User mute and
+raw/processed audio selections remain on the activity's existing audio controller. An explicit
+Viewer **Disconnect** suppresses subsequent recovery commands, whereas system lifecycle cleanup
+does not mark a user disconnect and remains recoverable.
+
+Use these logs while testing:
+
+```powershell
+C:\platform-tools\adb.exe logcat -c
+C:\platform-tools\adb.exe logcat -v time NannyCamRecovery:I NannyCamPiP:I ViewerStartup:I VideoPlayback:I *:S
+```
+
+For physical validation, first connect normally, enter PiP, provoke the known Fire OS removal by
+starting a YouTube video or changing a TiviMate channel, restore the task with `pip_remote`, then
+send the broadcast (repeat once only if the platform task restoration itself requires its known
+second attempt). Confirm `Recovery accepted`, surface readiness, exactly one video startup and
+`Recovery first video frame`; then verify camera audio begins only after the frame. Also test a
+second broadcast while live (it must be ignored), missing/invalid saved configuration (it must be
+rejected), and an explicit Disconnect followed by the broadcast (it must be ignored). These are
+physical Fire TV checks; successful builds and unit tests are not evidence that Fire OS has kept
+or restored the PiP surface correctly.
+
 ## Physical validation procedure
 
 1. Connect to the camera and wait until Viewer status is **Live**. Verify **Test PiP** is

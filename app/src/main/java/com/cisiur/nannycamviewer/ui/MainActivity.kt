@@ -35,7 +35,7 @@ import com.cisiur.nannycamviewer.probe.H264ProbeOutcome
 import com.cisiur.nannycamviewer.probe.H264ProbeResult
 import com.cisiur.nannycamviewer.probe.H264RtspProbe
 
-class MainActivity : Activity() {
+class MainActivity : Activity(), RecoverySessionOwner {
     private lateinit var endpointInput: EditText
     private lateinit var configurationMessage: TextView
     private lateinit var probeMessage: TextView
@@ -68,6 +68,8 @@ class MainActivity : Activity() {
     private val startupHandler = Handler(Looper.getMainLooper())
     private var pendingInitialAudioStart: Runnable? = null
     private val pipLifecyclePolicy = PipLifecyclePolicy()
+    private val recoverySessionPolicy = RecoverySessionPolicy()
+    private var recoveryAwaitingFirstVideoFrame = false
     private var deferredPipStopCleanup: Runnable? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -110,6 +112,9 @@ class MainActivity : Activity() {
                 }
 
                 override fun onPlaybackError(message: String, attemptId: Long) {
+                    if (recoveryAwaitingFirstVideoFrame) {
+                        Log.w(RECOVERY_TAG, "Recovery video attempt failed: $message")
+                    }
                     videoDiagnosticsText.text = getString(R.string.video_issue, message)
                     when (audioStartupGate.onVideoFailure(attemptId)) {
                         ViewerAudioStartupGate.VideoFailureDecision.CancelPendingAudioStart -> {
@@ -125,6 +130,10 @@ class MainActivity : Activity() {
                 }
 
                 override fun onFirstVideoOutput(startupLatencyMs: Long, attemptId: Long) {
+                    if (recoveryAwaitingFirstVideoFrame) {
+                        recoveryAwaitingFirstVideoFrame = false
+                        Log.i(RECOVERY_TAG, "Recovery first video frame after ${startupLatencyMs}ms")
+                    }
                     videoDiagnosticsText.text = getString(R.string.first_video_output, startupLatencyMs)
                     when (val decision = audioStartupGate.onVideoFirstFrame(attemptId)) {
                         is ViewerAudioStartupGate.FirstFrameDecision.ScheduleAudio -> {
@@ -190,6 +199,7 @@ class MainActivity : Activity() {
             PlatformDiagnosticsFormatter.format(PlatformDiagnostics.collect(this))
         updatePlaybackState(ConnectionState.NOT_CONNECTED)
         updateAudioState(AudioConnectionState.STOPPED)
+        CameraRecoveryRegistry.register(this)
         preferredViewerControl().requestFocus()
     }
 
@@ -245,6 +255,9 @@ class MainActivity : Activity() {
 
     private fun disconnectViewer() {
         cancelDeferredPipStopCleanup()
+        recoverySessionPolicy.onExplicitDisconnect()
+        recoveryAwaitingFirstVideoFrame = false
+        Log.i(RECOVERY_TAG, "Explicit Disconnect recorded; future recovery commands will be ignored")
         resetAudioStartupGate("Viewer session disconnected; audio-start gate reset")
         playbackController.disconnect()
         audioPlaybackController.disconnect()
@@ -272,6 +285,7 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         logPipLifecycle("onDestroy")
+        CameraRecoveryRegistry.unregister(this)
         cancelDeferredPipStopCleanup()
         unregisterSettingsBack?.invoke()
         if (pipLifecyclePolicy.onDestroy() == PipStopDecision.CLEANUP_NOW) {
@@ -312,26 +326,54 @@ class MainActivity : Activity() {
     }
 
     private fun connectSavedEndpoint() {
+        val configuredEndpoint = viewerEndpointUri ?: endpointStore.load()
+        val result = configuredEndpoint?.let(CameraEndpointNormalizer::normalize)
+        if (result is CameraEndpointNormalizer.Result.Valid) {
+            startViewerSession(result.uri, recovery = false)
+        } else {
+            refreshControls()
+        }
+    }
+
+    override fun onRecoveryCommand(endpoint: String) {
+        val endpointIsValid = CameraEndpointNormalizer.normalize(endpoint) is CameraEndpointNormalizer.Result.Valid
+        val decision = recoverySessionPolicy.decide(
+            endpointIsValid = endpointIsValid,
+            videoBusy = playbackController.isBusy,
+            probeRunning = h264Probe != null
+        )
+        Log.i(
+            RECOVERY_TAG,
+            "Recovery state: decision=$decision video=${playbackController.state} " +
+                "pip=${isPlatformInPipMode()} surface=${isVideoSurfaceValid()}"
+        )
+        if (decision != RecoveryDecision.START) {
+            Log.i(RECOVERY_TAG, "Recovery $decision")
+            return
+        }
+        startViewerSession(endpoint, recovery = true)
+    }
+
+    private fun startViewerSession(endpoint: String, recovery: Boolean) {
         if (playbackController.isBusy) return
         if (h264Probe != null) {
             statusText.text = getString(R.string.probe_in_progress)
             return
         }
-        val configuredEndpoint = viewerEndpointUri ?: endpointStore.load()
-        val result = configuredEndpoint?.let(CameraEndpointNormalizer::normalize)
-        if (result is CameraEndpointNormalizer.Result.Valid) {
-            if (viewerEndpointUri == null) {
-                viewerEndpointUri = result.uri
-                audioStartupGate.beginSession(result.uri)
-            }
-            videoSurface.visibility = View.VISIBLE
-            videoDiagnosticsText.text = ""
-            audioErrorText.text = ""
-            Log.i(TAG, "Viewer session connect: hardware video first; initial audio gated until video output")
-            playbackController.connect(result.uri)
-        } else {
-            refreshControls()
+        if (viewerEndpointUri == null) {
+            viewerEndpointUri = endpoint
+            audioStartupGate.beginSession(endpoint)
         }
+        if (!recovery) recoverySessionPolicy.onUserConnectAccepted()
+        videoSurface.visibility = View.VISIBLE
+        videoDiagnosticsText.text = ""
+        audioErrorText.text = ""
+        Log.i(TAG, "Viewer session connect: hardware video first; initial audio gated until video output")
+        if (recovery) {
+            recoveryAwaitingFirstVideoFrame = true
+            Log.i(RECOVERY_TAG, "Recovery accepted; surfaceReady=${isVideoSurfaceValid()} connection startup requested")
+        }
+        playbackController.connect(endpoint)
     }
 
     private fun runH264Probe() {
@@ -554,6 +596,8 @@ class MainActivity : Activity() {
     }
 
     private fun cleanupForLifecycle(reason: String) {
+        recoverySessionPolicy.onLifecycleCleanup()
+        recoveryAwaitingFirstVideoFrame = false
         resetAudioStartupGate("Viewer session lifecycle release ($reason); audio-start gate reset")
         setViewerKeepScreenOn(false)
         playbackController.releaseForLifecycle()
@@ -666,6 +710,7 @@ class MainActivity : Activity() {
     private companion object {
         const val TAG = "ViewerStartup"
         const val PIP_TAG = "NannyCamPiP"
+        const val RECOVERY_TAG = "NannyCamRecovery"
         const val PIP_TRANSITION_CONFIRMATION_DELAY_MS = 750L
     }
 }
