@@ -122,6 +122,10 @@ rejected), and an explicit Disconnect followed by the broadcast (it must be igno
 physical Fire TV checks; successful builds and unit tests are not evidence that Fire OS has kept
 or restored the PiP surface correctly.
 
+## Physical result / production helper
+
+Physical testing on Fire TV Stick 4K (AFTKRT) confirmed that an external shell helper can restore NannyCam's pinned, visible PiP after TiviMate channel changes or YouTube foreground transitions, often requiring two internal stack moves per press. Later v5 testing confirmed Bluetooth remote reconnection and more than 24 hours of process uptime; a Windows sign-in task can ensure that the helper is running. Full source, installation and limitations are documented in [Netflix remote PiP helper and Windows autostart](12_FIRETV_PIP_REMOTE.md). This does not change the historical scope of ATV-04-DIAG-01 described above, nor demonstrate portable support on other firmware.
+
 ## Physical validation procedure
 
 1. Connect to the camera and wait until Viewer status is **Live**. Verify **Test PiP** is
